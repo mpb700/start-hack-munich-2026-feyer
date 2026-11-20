@@ -36,16 +36,16 @@ Offizielle Baseline (Xeon Platinum 8468, 1 CPU, `benchmarks/cpu-baseline.json`):
 
 | # | Idee | Status |
 |---|---|---|
-| 1 | Rauschen ohne dritte Lösung: `Re(wᴴ N w)` statt `Re(sᴴ M⁻¹ N w)` | umgesetzt im Fast-Path (`philip`), offen im JAX-Fallback |
-| 2 | Rauschmatrix N einmal bauen statt 101-mal (frequenzunabhängig) | umgesetzt (`philip`: alle 66 Rausch-Komponenten 1×) |
+| 1 | Rauschen ohne dritte Lösung: `Re(wᴴ N w)` statt `Re(sᴴ M⁻¹ N w)` | umgesetzt: auf `philip` im Fast-Path, auf `max/lu-once` im JAX-Pfad (Build-Plan) |
+| 2 | Rauschmatrix N einmal bauen statt 101-mal (frequenzunabhängig) | umgesetzt auf beiden Branches (alle 66 Rausch-Komponenten 1×, auf `max/lu-once` ohne dichte Matrix) |
 | 3 | Rückwärtsvektor des Signals aus dem Detektor-Adjoint wiederverwenden | umgesetzt als „Detektor-Basis“ (`philip`) |
-| 4 | Frequenzunabhängige Komponenten nur einmal auswerten | umgesetzt (`philip`: 179 von 679 Signal-Komponenten 1×) |
-| 5 | `vmap(lax.switch)` ersetzen (heute: alle 19 Funktionen pro Eintrag) | im Fast-Path entfallen (NumPy statt XLA), offen im JAX-Fallback |
-| 6 | Matrix in einem Schritt schreiben: keine Block-Kopien, rechte Seite getrennt | im Fast-Path entfallen (CSC wird direkt gebaut) |
+| 4 | Frequenzunabhängige Komponenten nur einmal auswerten | umgesetzt auf beiden Branches (179 von 679 Signal-Komponenten 1×) |
+| 5 | `vmap(lax.switch)` ersetzen (heute: alle 19 Funktionen pro Eintrag) | `philip`: entfallen (NumPy), `max/lu-once`: ersetzt durch Gruppen aus dem Build-Plan |
+| 6 | Matrix in einem Schritt schreiben: keine Block-Kopien, rechte Seite getrennt | `philip`: CSC direkt, `max/lu-once`: Konjugation auf Werten, jeder Eintrag einmal geschrieben |
 | 7 | Dünnbesetztheit ausnutzen (Sparse LU) | umgesetzt (`philip`: SuperLU, feste COLAMD-Ordnung) |
 | 8 | Eigene Rückwärtsregel, Kotangenten nur an Nichtnull-Positionen | umgesetzt (`philip`: `custom_vjp`) |
 | 9 | Löser aus XLA herausnehmen (`pure_callback`) | umgesetzt (`philip`: Kompilieren nur noch ca. 0,09 s) |
-| 10 | LU-Zerlegung pro Frequenz einmal statt dreimal | Commit `3153d6d` hier, wirkt nur noch im JAX-Fallback |
+| 10 | LU-Zerlegung pro Frequenz einmal statt dreimal | umgesetzt auf `max/lu-once` (Commit `3153d6d`) |
 | 11 | `plotly` nicht beim Import laden | umgesetzt auf `max/lu-once` (Commit `3cf5fab`): 26,3 → 11,7 ms, für `philip` noch zu übernehmen |
 | 12 | Blockstruktur oben/unten/Mechanik (Schur-Komplement) | offen, neben Sparse LU vermutlich überflüssig |
 | 13 | XLA-Flags mit niedrigerer Optimierungsstufe | verworfen: Grauzone, und das Kompilieren ist schon fast weg |
@@ -99,8 +99,46 @@ Meine Schätzung aus der Topologie (71 Strecken × 4 Feldrichtungen ≈ 286 Carr
 
 Gemessen auf macOS (Python 3.12, gepinnte Requirements, Median aus 9 frischen Prozessen, nach `import jax, numpy` wie im Benchmark): `import differometor` braucht **26,3 ms vorher, 11,7 ms nachher**. Der Gewinn ist mit ca. 15 ms klein, weil plotly 7 intern selbst schon lazy lädt. Bei ca. 0,4 s First-Run auf `philip` sind das trotzdem ca. 3–4 %. Die Änderung lässt sich per Cherry-Pick auf `philip` übernehmen (`__init__.py` ist dort unverändert).
 
+## Umsetzung auf `max/lu-once`: statischer Build-Plan
+
+`max/lu-once` bleibt beim dichten JAX-Pfad (getrennt von `philip`). Die Punkte 1, 2, 4, 5 und 6 sind dort über einen **statischen Build-Plan** umgesetzt (`differometor/plan.py`).
+
+**Das Problem:** `benchmark.py` übergibt alle Build-Arrays als getracte Argumente an `jax.jit`. `simulate` weiß beim Tracen deshalb nicht, welche Komponentenfunktion zu welchem Matrixeintrag gehört. Darum gibt es das `vmap(lax.switch)` über alle 19 Funktionen.
+
+**Die Lösung:** `run_build_step` gibt zusätzlich ein Argument `plan` mit. Das ist ein Pytree **ohne Array-Blätter**, seine Struktur steckt in den statischen Aux-Daten. Damit kennt `simulate` die Indexstruktur beim Tracen. Alle Werte werden weiterhin bei jedem Aufruf aus den Parametern berechnet, nur die Indexstruktur ist fest. Ohne Plan (`plan=None`) läuft der unveränderte alte Code.
+
+Was der Plan-Pfad anders macht:
+- **Gruppen statt `switch`:** Jede Komponentenfunktion läuft genau einmal auf allen Komponenten, die sie nutzen.
+- **Frequenzunabhängiges einmal:** Komponenten ohne Sweep-Parameter in den Eingaben werden nur auf Zeile 0 ausgewertet und einmal in die Basismatrix geschrieben. Betroffen sind 179 von 679 Signal-Komponenten, alle 66 Rausch-Komponenten und alle 77 Carrier-Komponenten.
+- **Konjugation auf Werten:** Das untere Seitenband wird einmal an der Basismatrix und per statischer Maske an den geschriebenen Werten konjugiert. Durch die Carrier-Skalierung zieht es sich über `conj(-M·c) = -conj(M)·conj(c)`.
+- **Jeder Eintrag einmal:** Doppelte Schreibzugriffe werden beim Build auf den letzten Schreiber reduziert, wie bei `.at[].set`. Danach wird mit `unique_indices=True` geschrieben.
+- **Rauschen als quadratische Form:** `Re(wᴴ N w)` über die 272 Nichtnull-Einträge von N. Es gibt keine dichte Rauschmatrix (101 × 751 × 751) und keine dritte Lösung mehr.
+
+**Korrektheit:**
+- `benchmark.py` meldet **PASS**. Der maximale Log-Fehler liegt bei 5,37e-6, wie in der Baseline. Der Gradienten-Spotcheck stimmt bis auf 1e-8 relativ.
+- `tools/check_plan_setups.py` vergleicht Plan-Pfad und alten Pfad auf aLIGO, Voyager (Homodyn) und einem zufälligen uifo 2×2, jeweils mit Frequenz- und Carrier-Sweep. Die Abweichungen liegen bei 0 bis 2e-10.
+- Auf dem Benchmark-Setup sind die Signalmatrizen beider Pfade bis auf 10 von 1,7 Mio. Einträgen bitgleich, die Differenz beträgt 5e-35. Die Systeme haben aber eine Konditionszahl von ca. 1e30. Rundungsunterschiede wachsen deshalb im Rauschen auf ca. 1e-9 relativ an. Das liegt 4 Größenordnungen unter der Benchmark-Toleranz.
+- Linking ließ sich nicht testen, weil schon der unveränderte Build mit meinem Linking-Versuch abbricht. Linking wirkt aber vor der Sweep-Expansion und ändert die Zeilen-Invarianz daher nicht.
+
+**Messung:** macOS, Apple M2 Pro, auf einen Thread begrenzt wie in Philips `runs/env.sh`. Der Mac lagerte während der Messung stark aus (ca. 15 GB Swap belegt).
+
+Vorher/nachher mit `tools/dev_check.py --stride 50` (3 Frequenzen, je 2 Läufe; bei 3 Frequenzen passt auch der alte Stand in den Speicher):
+
+| | alt (`79ae580`) | Build-Plan | Änderung |
+|---|---:|---:|---:|
+| Kompilieren gesamt | 4,54–4,64 s | 1,82–1,90 s | −60 % |
+| Gradient warm | 0,016–0,022 s | 0,008–0,009 s | ca. −55 % |
+| Forward warm | 0,055–0,081 s | 0,044 s | ca. −20 % |
+| Speicherspitze | 1,30 GiB | 0,79 GiB | −39 % |
+
+Voller Benchmark mit Build-Plan (`runs/dev/bench-plan-mac.json`, `--repeats 3`): **6,60 s First-Run**, davon 2,32 s Kompilieren, 2,23 s Forward und 0,55 s Gradient. Der Warm-Median liegt bei 2,65 s, die Speicherspitze bei 4,3 GB. Laut README braucht das Original 14,4 GiB.
+
+Den vollen Benchmark des alten Stands konnte ich auf diesem Mac nicht fair messen, weil er mit ca. 14 GB stark auslagern würde. Zum Vergleich: Die offizielle Baseline liegt bei 44,2 s (Xeon), Philips macOS-Baseline bei 11,0 s (anderer Mac).
+
+**Was jetzt dominiert:** die dichte LU-Zerlegung im Forward (101 × 751×751, ca. 22 ms pro Frequenz) und das Kompilieren. Der nächste große Schritt wäre Sparse LU. Das ist der Weg, den `philip` schon gegangen ist.
+
 ## Was als Nächstes noch lohnt
 
 1. **Imports weiter aufschlüsseln.** Laut Philip entfallen auf `import jax` ca. 0,22 s und auf `scipy.sparse.linalg` ca. 0,04 s. Der plotly-Anteil (ca. 15 ms) ist erledigt, der Rest sollte per `python -X importtime` geprüft werden.
 2. **Offizielle Messung auf Linux x86 mit `--cpus 1`.** Bisher gibt es nur macOS (Threads begrenzt) und Docker auf aarch64.
-3. **JAX-Fallback** (Punkte 1, 5, 6, 10): bringt für die Wertung nichts, wäre aber für andere Setups und den Sonderpreis eine saubere Ergänzung.
+3. **Dichte LU auf `max/lu-once`:** Sie ist jetzt der größte Laufzeitposten. Sparse LU hier nachzubauen würde Philips Ansatz doppeln, das sollten wir vorher absprechen.

@@ -25,6 +25,7 @@ from jax import lax, vmap, jit
 from differometor.setups import Setup
 from differometor.build import build, pairs_to_arrays, prepare_arrays, LINKING_FUNCTIONS
 from differometor.components import FUNCTIONS, UNIT_VACUUM, H_PLANCK, F0
+from differometor.plan import BuildPlan, make_plan
 
 
 jax.config.update("jax_enable_x64", True)
@@ -164,6 +165,47 @@ def update(
     return matrix.at[matrix_indices[0], matrix_indices[1]].set(outputs)
 
 
+def _evaluate_entries(entry_update, parameters: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    Evaluate the component functions of one matrix using a static `BuildPlan` entry.
+
+    Each function runs once on exactly the components that use it (no batched
+    `lax.switch`). Components whose inputs are not swept are evaluated on the
+    first parameter row only.
+
+    Returns the values of the row-invariant entries, shape (Mi,), and of the
+    row-dependent entries, shape (R, Mv), in the order of the plan's entry lists.
+    """
+
+    def run(groups, rows):
+        if not groups:
+            return None
+        outputs = [
+            vmap(vmap(FUNCTIONS[function]))(rows[:, entry_update.inputs[positions]])
+            for function, positions in groups
+        ]
+        return jnp.concatenate(outputs, axis=1)
+
+    invariant = run(entry_update.invariant_groups, parameters[:1])
+    varying = run(entry_update.varying_groups, parameters)
+    slot, column, _, _ = entry_update.invariant_entries
+    invariant_values = invariant[0, slot, column] if invariant is not None else jnp.zeros((0,), jnp.complex128)
+    slot, column, _, _ = entry_update.varying_entries
+    varying_values = (
+        varying[:, slot, column] if varying is not None else jnp.zeros((parameters.shape[0], 0), jnp.complex128)
+    )
+    return invariant_values, varying_values
+
+
+def _fill_matrix(base, entry_update, invariant_values, varying_values, row_count: int) -> jnp.ndarray:
+    """Write invariant entries once into the base matrix, then varying entries per row."""
+    rows, cols = entry_update.invariant_entries[2:]
+    base = base.at[rows, cols].set(invariant_values, unique_indices=True)
+    full = jnp.broadcast_to(base, (row_count, *base.shape))
+    rows, cols = entry_update.varying_entries[2:]
+    return full.at[:, rows, cols].set(varying_values, unique_indices=True)
+
+
 def expand_parameters(array: jnp.ndarray, indices: jnp.ndarray, values: jnp.ndarray) -> jnp.ndarray:
     """
     Expand a single parameter row into multiple rows by replacing selected entries.
@@ -239,6 +281,8 @@ def simulate(
     noise_function_indices: jnp.ndarray,
     noise_output_indices: tuple[jnp.ndarray, jnp.ndarray],
     noise_system_matrix_indices: tuple[jnp.ndarray, jnp.ndarray],
+    # static structure (optional)
+    plan: BuildPlan | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
     Run one full simulation pass: carrier, signal, and quantum noise.
@@ -340,50 +384,76 @@ def simulate(
     # Carrier solve
     # --------------------
     parameters = expand_parameters(parameters, carrier_changing_parameter_indices, carrier_changing_values)
-    carrier_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
-        parameters,
-        carrier_matrix,
-        carrier_function_input_indices,
-        carrier_output_indices,
-        carrier_matrix_indices,
-        carrier_function_indices,
-    )
+    if plan is None:
+        carrier_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
+            parameters,
+            carrier_matrix,
+            carrier_function_input_indices,
+            carrier_output_indices,
+            carrier_matrix_indices,
+            carrier_function_indices,
+        )
+    else:
+        invariant_values, varying_values = _evaluate_entries(plan.carrier, parameters)
+        carrier_matrix = _fill_matrix(carrier_matrix, plan.carrier, invariant_values, varying_values, parameters.shape[0])
     carrier = vmap(solve)(carrier_matrix[:, :, :-1], carrier_matrix[:, :, -1])
 
     # --------------------
     # Signal solve
     # --------------------
     parameters = expand_parameters(parameters, signal_changing_parameter_indices, signal_changing_values)
-    signal_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
-        parameters,
-        signal_matrix,
-        signal_function_input_indices,
-        signal_output_indices,
-        signal_matrix_indices,
-        signal_function_indices,
-    )
-
-    # Scale signal connector entries by the carrier solution at the respective spaces.
-    # The minus sign matches the sign convention used by the referenced modeling tools.
-    signal_entries = (
-        -signal_matrix[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]]
-        * carrier[:, signal_carrier_indices.flatten()]
-    )
-    signal_matrix = signal_matrix.at[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]].set(
-        signal_entries
-    )
-
-    # Apply conjugation rules to enforce upper and lower sideband symmetry.
     carrier_size = carrier.shape[1]
-    signal_matrix = signal_matrix.at[:, carrier_size : carrier_size * 2, carrier_size : carrier_size * 2].set(
-        jnp.conjugate(signal_matrix[:, carrier_size : carrier_size * 2, carrier_size : carrier_size * 2])
-    )
-    signal_matrix = signal_matrix.at[:, carrier_size * 2 :, :carrier_size].set(
-        jnp.conjugate(signal_matrix[:, carrier_size * 2 :, :carrier_size])
-    )
-    signal_matrix = signal_matrix.at[:, carrier_size : carrier_size * 2, carrier_size * 2 :].set(
-        jnp.conjugate(signal_matrix[:, carrier_size : carrier_size * 2, carrier_size * 2 :])
-    )
+    if plan is None:
+        signal_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
+            parameters,
+            signal_matrix,
+            signal_function_input_indices,
+            signal_output_indices,
+            signal_matrix_indices,
+            signal_function_indices,
+        )
+
+        # Scale signal connector entries by the carrier solution at the respective spaces.
+        # The minus sign matches the sign convention used by the referenced modeling tools.
+        signal_entries = (
+            -signal_matrix[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]]
+            * carrier[:, signal_carrier_indices.flatten()]
+        )
+        signal_matrix = signal_matrix.at[:, signal_carrier_placing_indices[0], signal_carrier_placing_indices[1]].set(
+            signal_entries
+        )
+
+        # Apply conjugation rules to enforce upper and lower sideband symmetry.
+        carrier_size = carrier.shape[1]
+        signal_matrix = signal_matrix.at[:, carrier_size : carrier_size * 2, carrier_size : carrier_size * 2].set(
+            jnp.conjugate(signal_matrix[:, carrier_size : carrier_size * 2, carrier_size : carrier_size * 2])
+        )
+        signal_matrix = signal_matrix.at[:, carrier_size * 2 :, :carrier_size].set(
+            jnp.conjugate(signal_matrix[:, carrier_size * 2 :, :carrier_size])
+        )
+        signal_matrix = signal_matrix.at[:, carrier_size : carrier_size * 2, carrier_size * 2 :].set(
+            jnp.conjugate(signal_matrix[:, carrier_size : carrier_size * 2, carrier_size * 2 :])
+        )
+    else:
+        # Same result as above: the lower-sideband conjugation is applied to the base
+        # matrix once and to the written values by a static mask, and conj(-M * c)
+        # = -conj(M) * conj(c) moves it through the carrier scaling.
+        invariant_values, varying_values = _evaluate_entries(plan.signal, parameters)
+        invariant_values = jnp.where(plan.signal_invariant_conjugate, jnp.conjugate(invariant_values), invariant_values)
+        varying_values = jnp.where(plan.signal_varying_conjugate, jnp.conjugate(varying_values), varying_values)
+        lower, upper = slice(carrier_size, 2 * carrier_size), slice(2 * carrier_size, None)
+        base = signal_matrix
+        base = base.at[lower, lower].set(jnp.conjugate(base[lower, lower]))
+        base = base.at[upper, :carrier_size].set(jnp.conjugate(base[upper, :carrier_size]))
+        base = base.at[lower, upper].set(jnp.conjugate(base[lower, upper]))
+        signal_matrix = _fill_matrix(base, plan.signal, invariant_values, varying_values, parameters.shape[0])
+
+        rows, cols, carrier_indices, conjugate = plan.placing
+        selected_carrier = carrier[:, carrier_indices]
+        selected_carrier = jnp.where(conjugate, jnp.conjugate(selected_carrier), selected_carrier)
+        signal_matrix = signal_matrix.at[:, rows, cols].set(
+            -signal_matrix[:, rows, cols] * selected_carrier, unique_indices=True
+        )
 
     # Factorize each frequency's signal system once; the signal, noise-weight
     # (adjoint) and covariance solves below all reuse these LU factors.
@@ -432,40 +502,55 @@ def simulate(
     adjoint_solve = lambda m, f, b: factorized_solve(m, f, b, adjoint=True)
     noise_weights = vmap(vmap(adjoint_solve), in_axes=(None, None, 0))(signal_system, signal_factors, carrier_selections)
 
-    # Update noise source matrix (may depend on current parameters).
-    noise_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
-        parameters,
-        noise_matrix,
-        noise_function_input_indices,
-        noise_output_indices,
-        noise_system_matrix_indices,
-        noise_function_indices,
-    )
+    if plan is None:
+        # Update noise source matrix (may depend on current parameters).
+        noise_matrix = vmap(update, in_axes=(0, None, None, None, None, None))(
+            parameters,
+            noise_matrix,
+            noise_function_input_indices,
+            noise_output_indices,
+            noise_system_matrix_indices,
+            noise_function_indices,
+        )
 
-    def matmul_single_batch(matrix_batch: jnp.ndarray, vector_batch: jnp.ndarray) -> jnp.ndarray:
-        """
-        Multiply a batch of matrices with a batch of vectors.
+        def matmul_single_batch(matrix_batch: jnp.ndarray, vector_batch: jnp.ndarray) -> jnp.ndarray:
+            """
+            Multiply a batch of matrices with a batch of vectors.
 
-        Parameters
-        ----------
-        matrix_batch : jnp.ndarray
-            Shape (B, N, N).
-        vector_batch : jnp.ndarray
-            Shape (B, N).
+            Parameters
+            ----------
+            matrix_batch : jnp.ndarray
+                Shape (B, N, N).
+            vector_batch : jnp.ndarray
+                Shape (B, N).
 
-        Returns
-        -------
-        product : jnp.ndarray
-            Shape (B, N).
-        """
-        return jnp.einsum("bij,bj->bi", matrix_batch, vector_batch)
+            Returns
+            -------
+            product : jnp.ndarray
+                Shape (B, N).
+            """
+            return jnp.einsum("bij,bj->bi", matrix_batch, vector_batch)
 
-    # Project noise sources into the system and propagate through the signal matrix.
-    noise_sources = vmap(matmul_single_batch, in_axes=(None, 0))(noise_matrix, noise_weights)
-    covariances = vmap(vmap(factorized_solve), in_axes=(None, None, 0))(signal_system, signal_factors, noise_sources)
+        # Project noise sources into the system and propagate through the signal matrix.
+        noise_sources = vmap(matmul_single_batch, in_axes=(None, 0))(noise_matrix, noise_weights)
+        covariances = vmap(vmap(factorized_solve), in_axes=(None, None, 0))(signal_system, signal_factors, noise_sources)
 
-    # Convert propagated covariances into amplitude spectral density.
-    temporary_sum = jnp.sum(jnp.real(covariances * jnp.conjugate(carrier_selections)), axis=2)
+        # Convert propagated covariances into amplitude spectral density.
+        temporary_sum = jnp.sum(jnp.real(covariances * jnp.conjugate(carrier_selections)), axis=2)
+    else:
+        # With w = M^-H s, the propagated covariance obeys s^H M^-1 N w = w^H N w,
+        # so the noise power needs no third solve and no dense noise matrix:
+        # it is the quadratic form of w with the few nonzero entries of N.
+        def quadratic_form(values, rows, cols):
+            return jnp.sum(jnp.conjugate(noise_weights[..., rows]) * values * noise_weights[..., cols], axis=-1)
+
+        invariant_values, varying_values = _evaluate_entries(plan.noise, parameters)
+        base_rows, base_cols = plan.noise_base
+        temporary_sum = jnp.real(
+            quadratic_form(noise_matrix[base_rows, base_cols], base_rows, base_cols)
+            + quadratic_form(invariant_values, *plan.noise.invariant_entries[2:])
+            + quadratic_form(varying_values, *plan.noise.varying_entries[2:])
+        )
     noise = jnp.sqrt(2 * temporary_sum * UNIT_VACUUM * H_PLANCK * F0 * 0.25)
 
     return carrier.T, signal.T, noise.squeeze()
@@ -527,7 +612,8 @@ def run_build_step(
     arg_count = simulate.__code__.co_argcount
     arg_names = simulate.__code__.co_varnames[:arg_count]
 
-    all_arrays = (*prepared_arrays, *matrices, *carrier_arrays, *signal_arrays, *noise_arrays)
+    plan = make_plan(prepared_arrays, matrices, carrier_arrays, signal_arrays, noise_arrays)
+    all_arrays = (*prepared_arrays, *matrices, *carrier_arrays, *signal_arrays, *noise_arrays, plan)
     if len(arg_names) != len(all_arrays):
         raise ValueError(
             "simulate signature does not match the number of prepared arrays and matrices. "
