@@ -1,8 +1,8 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 19:08, nach der zwölften Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 20:12, nach der zwölften Runde und Philips eigenem Homodyne-Umbau. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
-**Zuerst lesen:** «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
+**Zuerst lesen:** «Stand 20:12» und «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
 ## Messwerte
 
@@ -91,17 +91,25 @@ Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar 
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
 
+## Stand 20:12: Philip hat Balanced Homodyne selbst eingebaut, `main` noch nicht
+
+- **`origin/philip-fastest`** steht auf `11e96b4`. Neu seit `efad894`: `708803d` (19:51, «Fast path covers balanced homodyne detectors», Philips eigene Fassung nach dem Muster von `8cb5eff`, ohne Verknüpfungen) und `11e96b4` (20:04, Dokumente aus dem offiziellen Repo übernommen). Philips Messung auf dem Xeon (Auftrag `homodyn-1944`): Fixture mit Homodyne-Auslese 35'505 → 323 ms, Zufalls-UIFOs mit Homodyne 314 bis 325 ms, Fixture selbst 319,2 → 320,3 ms mit bitgleichen Ausgaben.
+- **Von hier aus nachgeprüft** (Mac, Stand `11e96b4`): `test_variants.py` zeigt 19 von 21 Varianten über den schnellen Weg mit denselben Abweichungen wie `noel` (WORST `|dln s|` 4,95e-07, Gradient 2,41e-08). Die zwei Varianten mit Amplitudenmodulation laufen dort richtig, aber über JAX (verknüpfte Parameter, kommen in einem JSON-Fixture nicht vor). `variant_run.py`: Fixture, Homodyne-Variante und zwei Zufalls-UIFOs mit Homodyne `PASS` bei 307 bis 346 ms.
+- **`origin/main`** steht weiter auf `50341f9` und hat den Umbau nicht. `main` ist ein Vorfahr von `philip-fastest`, Philip kann also ohne Merge vorspulen.
+- **Der Patch aus Runde 12 ist für `philip-fastest` überholt und darf dort nicht mehr angewendet werden** (er ändert dieselben Stellen wie `708803d`). Für `main` gilt: Käme er dort hinein, gäbe es beim nächsten Zusammenführen mit `philip-fastest` Konflikte in `fast.py`, `simulate.py`, `check_setups.py` und zwei `.pyc`-Dateien. Noel hat um 20:06 «Ja, auf main pushen» gesagt, als Philips Commit schon 15 Minuten auf dem Server lag. Darum ist nichts gepusht, und die Frage liegt wieder bei Noel.
+- **Offizielles Repo** (feyerlabs `2bb437a`, 21.11. 14:26, von Philip übernommen): Das README sagt jetzt «faster for general optical setups» und «Final evaluation uses a different optical setup, a slight variation of the supplied example». Die Geschwindigkeitspreise gelten für den «complete first-run total on the final optical setup». Korrekt ist eine Abgabe, wenn sie Ergebnisse und Gradienten «on both the development example and the final setup» erhält.
+
 ## Runde 12 (21.11., 18:36 bis 19:08): `main` ist jetzt Philips Stand, Patch für Balanced Homodyne
 
 **Lage:** `origin/main` steht seit 17:30 auf Philips Linie (`50341f9`: Tuning-Modul, eigene C-Zerlegung, Zwischenspeicher, Start-Massnahmen, mitgelieferter Bytecode). `origin/philip-fastest` (`efad894`, 18:26) geht noch weiter. Philips Messungen auf dem Xeon Platinum 8468: `main` 355,8 ms, `philip-fastest` 315,3 ms im Erstlauf (Auftrag `neu-1804`). `noel` lag dort bei 726 ms (Stand Runde 8). Die Abgabe wird also aus dieser Linie kommen, nicht aus `noel`.
 
 **Das Problem dort:** `fast.supports` schliesst in beiden Branches weiter Balanced Homodyne und verknüpfte Parameter aus. Philip hat es in `runs/philip/NOTIZEN.md` selbst als offen vermerkt: Ein Homodyne-Setup braucht auf dem Xeon 35,5 s (Auftrag `stand-1642`). Der Zufallsgenerator, aus dem das Fixture stammt, wählt Homodyne in der Hälfte der Fälle (siehe Runde 9).
 
-**Was diese Runde geliefert hat:** [`runs/noel/patches/main-homodyne.patch`](patches/main-homodyne.patch), ein Commit gegen `origin/main` (`50341f9`), der den Umbau aus Runde 9 auf Philips `fast.py` überträgt. `main` und `philip-fastest` selbst sind unverändert. Anwenden (lässt sich auf beide Branches ohne Konflikt anwenden, geprüft mit `git am`):
+**Was diese Runde geliefert hat:** [`runs/noel/patches/main-homodyne.patch`](patches/main-homodyne.patch), ein Commit gegen `origin/main` (`50341f9`), der den Umbau aus Runde 9 auf Philips `fast.py` überträgt. `main` und `philip-fastest` selbst sind unverändert. Anwenden (Stand 19:08. Seit 19:51 nur noch für `main` sinnvoll, siehe «Stand 20:12»):
 
 ```bash
 git fetch origin
-git checkout main            # oder philip-fastest
+git checkout main            # nicht mehr auf philip-fastest: dort ist Philips eigener Umbau
 git show origin/noel:runs/noel/patches/main-homodyne.patch | git am
 ```
 
@@ -603,7 +611,7 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 | `origin/Joel` | `9f79a5f` (21.11. 17:53), neu seit `76e799f`: nur das README (Verweis auf das neue Tag `joels-fastest` = `ac7aedc`). Baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
 | `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 18:36 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `50341f9` (21.11. 17:30). Bis dahin das unveränderte Kit `5eece1d`, seither Philips Linie `philip-nacht` mit `noel` bis `cb902d7` (Runde 7) | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Für `main` gibt es den Patch aus Runde 12. Das unveränderte Kit ist weiter `5eece1d` |
-| `origin/philip-fastest` | `efad894` (21.11. 18:26), neu. `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon) | nicht übernommen. Der Patch aus Runde 12 passt auch hier |
+| `origin/philip-fastest` | `11e96b4` (21.11. 20:04). `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
 

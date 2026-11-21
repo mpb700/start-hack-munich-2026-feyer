@@ -16,6 +16,7 @@ Im Discord nur mitlesen: Noel hat festgelegt, dass wir dort nichts schreiben und
 | Frage | Antwort von Feyer | Folge für uns |
 | --- | --- | --- |
 | C3: andere Setups? | «The final evaluation will use a similar optical setup like the one included in the GitHub repo, but with slightly different parameters and components. Your simulator submissions should still work with that slight setup variation.» | Der schnelle Weg deckt seit Runde 9 auch Balanced-Homodyne-Detektoren ab. Der Zufallsgenerator, aus dem das Fixture stammt, wählt sie in der Hälfte der Fälle. Nachgestellt mit 14 Varianten, alle `PASS` bei 0,45 bis 0,49 s (Mac). Siehe `runs/noel/NOTIZEN.md`, Runde 9 |
+| C3, im offiziellen README (feyerlabs `2bb437a`, 21.11. 14:26) | «Final evaluation uses a different optical setup, a slight variation of the supplied example.» Die Preise gelten für den «complete first-run total on the final optical setup», korrekt heisst «on both the development example and the final setup» | Wie oben. Auf `noel` und seit 19:51 auf `philip-fastest` abgedeckt, auf `main` noch nicht |
 | B1, B2 (Teil): wie viele CPUs? | Jonathan Klimesch, 14:30: eine logische CPU, wie `--cpus 1` im Benchmark | Mehr Kerne nützen nichts. Unser Weg ist ohnehin einfädig |
 | B2 (Teil): zählt die Kompilation? | Ja. Gemessen wird der komplette Erstlauf: Setup, Kompilation, Forward, Sensitivity und Gradient | Wie bisher angenommen |
 
