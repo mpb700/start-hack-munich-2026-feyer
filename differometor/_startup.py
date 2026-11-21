@@ -29,7 +29,7 @@ kind (B)  does NOT remove work. It moves the imports in front of the first timer
 
 For measurements the switches can be overridden per process without editing this file:
 ``DIFFEROMETOR_STARTUP`` is a comma separated list out of ``gc``, ``lazy``, ``defer``,
-``dataclass``, ``jits``, ``preimport`` (or ``none``) and replaces the six early switches; ``DIFFEROMETOR_GC`` replaces ``GC_RUN``.
+``dataclass``, ``jits``, ``tpuprobe``, ``preimport`` (or ``none``) and replaces the six early switches; ``DIFFEROMETOR_GC`` replaces ``GC_RUN``.
 """
 import sys
 
@@ -72,6 +72,20 @@ DEFER_UNUSED_MODULES = True
 # not the expected one, nothing is installed. Rebuild the file with `runs/philip/bytecode.sh`.
 DATACLASS_CODE = True
 DATACLASS_CODE_FILE = "_dataclass_code.bin"
+
+# early, kind (A): a cheaper way for JAX to look for a Google TPU on the PCI bus. `import jax`
+# asks `jax._src.hardware_utils.num_available_tpu_chips_and_device_id` for it (once from
+# `cloud_tpu_init`, once from `xla_bridge` when it warns about a TPU that no jaxlib supports).
+# That function walks /sys/bus/pci/devices with `glob.glob` and reads every `vendor` file through
+# a `pathlib.Path` object: an `lstat` plus two opens plus a buffered `read_text` per device. On a
+# machine with many PCI devices (780 here) that costs 25 to 40 ms of the import on one core, even
+# with a warm cache. The replacement below asks the same questions from `os.scandir` with one
+# `os.open`/`os.read` per device and no objects: the same answer, about a third of the syscalls
+# and of the time. It is installed only while `jax._src.hardware_utils` still looks the way this
+# was written for (`_install_fast_tpu_probe` checks the probe's variables and the constants of the
+# two tables it reads); with another JAX nothing changes. The answer depends on the machine only,
+# so a machine with a TPU still gets its chips counted, here and on any other set-up.
+FAST_TPU_PROBE = True
 
 # early, kind (A): the jit objects of JAX's own functions are built on first use. `import jax`
 # decorates 323 of its functions with `jax.jit` (most of jax.numpy and lax); for each one JAX
@@ -148,11 +162,13 @@ def _early_options():
                 ("defer", DEFER_UNUSED_MODULES),
                 ("dataclass", DATACLASS_CODE),
                 ("jits", LAZY_JITS),
+                ("tpuprobe", FAST_TPU_PROBE),
                 ("preimport", PREIMPORT),
             )
             if on
         }
-    return {part.strip().lower() for part in value.split(",")} & {"gc", "lazy", "defer", "dataclass", "jits", "preimport"}
+    return {part.strip().lower() for part in value.split(",")} & {
+        "gc", "lazy", "defer", "dataclass", "jits", "tpuprobe", "preimport"}
 
 
 # --------------------------------------------------------------------------------------------
@@ -250,6 +266,131 @@ def _install_lazy_jits(pjit):
     # tracebacks and out of the source locations of traced operations.
     pjit.traceback_util.register_exclusion(__file__)
     pjit.source_info_util.register_exclusion(__file__)
+
+
+# --------------------------------------------------------------------------------------------
+# A cheaper PCI scan for the TPU probe of JAX
+# --------------------------------------------------------------------------------------------
+
+# What identifies the probe of jax._src.hardware_utils (JAX 0.9): its variables in order and the
+# names it uses. The replacement repeats the function with cheaper syscalls, nothing else.
+_PROBE_VARIABLES = ("num_chips", "tpu_version", "vendor_path", "vendor_id", "device_path", "device_id")
+_PROBE_NAMES = ("glob", "pathlib", "os", "_GOOGLE_PCI_VENDOR_ID", "_TPU_PCI_DEVICE_IDS")
+_READ_SIZE = 64  # bytes read from one small file under /sys
+_LIST_READ_SIZE = 1 << 16  # bytes read at a time from the list of the whole PCI bus
+_PROC_PCI_LIST = "/proc/bus/pci/devices"  # the whole bus in one file, where the kernel offers it
+
+
+def _install_fast_tpu_probe(module):
+    """Replace the PCI probe of `jax._src.hardware_utils` (an `_AfterExec` hook). Returns nothing."""
+    import os
+
+    namespace = module.__dict__
+    google = namespace.get("_GOOGLE_PCI_VENDOR_ID")
+    ids = namespace.get("_TPU_PCI_DEVICE_IDS")
+    original = namespace.get("num_available_tpu_chips_and_device_id")
+    if type(google) is not str or type(ids) is not dict or not ids:
+        raise TypeError("the TPU tables are not the expected ones")
+    if type(original) is not _FunctionType or original.__code__.co_varnames[:6] != _PROBE_VARIABLES:
+        raise TypeError("the probe is not the function this was written for")
+    if not all(name in original.__code__.co_names for name in _PROBE_NAMES):
+        raise TypeError("the probe is not the function this was written for")
+
+    def probe():
+        # The one list the kernel writes for the whole PCI bus answers the same question as the
+        # 780 small files under /sys; only when it is not there are the files asked one by one.
+        answer = _scan_pci_devices_via_proc(google, ids)
+        if answer is not None:
+            return answer
+        num_chips = 0
+        tpu_version = None
+        for path in _scan_pci_devices():
+            vendor_id = _read_small(path + "/vendor")
+            if vendor_id is None or vendor_id != google:
+                continue
+            device_id = _read_small(path + "/device")
+            if device_id in ids:
+                tpu_version = ids[device_id]
+                num_chips += 1
+        return num_chips, tpu_version
+
+    def _scan_pci_devices_via_proc(google, ids):
+        # (number of chips, version of the last one) from `/proc/bus/pci/devices`, or None when
+        # that file cannot be read or holds nothing: one open and a few reads instead of an open
+        # per device. A line of it is `bus<<8|devfn`, `vendor id` and `device id` as four hex
+        # digits each (lower case, no `0x`), then the irq and the resource ranges; what the
+        # original reads from `vendor` and `device` is the second and third of those fields, so
+        # the eight digits are split at the same place. Like the original, the version of the
+        # last matching device in the order of the bus is the one reported.
+        try:
+            fd = os.open(_PROC_PCI_LIST, os.O_RDONLY)
+        except OSError:
+            return None
+        try:
+            blocks = []
+            while True:
+                block = os.read(fd, _LIST_READ_SIZE)
+                if not block:
+                    break
+                blocks.append(block)
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+        if not blocks:
+            return None
+        text = b"".join(blocks)
+        if not text:
+            return None
+        vendor_key = google[2:].encode("ascii", "strict")  # '0x1ae0' -> b'1ae0'
+        num_chips = 0
+        tpu_version = None
+        for line in text.split(b"\n"):
+            fields = line.split(b"\t", 2)
+            if len(fields) < 2 or len(fields[1]) < 8:
+                continue
+            if fields[1][:4] != vendor_key:
+                continue
+            device_id = "0x" + fields[1][4:8].decode("ascii", "replace")  # the tables are keyed by str
+            if device_id in ids:
+                tpu_version = ids[device_id]
+                num_chips += 1
+        return num_chips, tpu_version
+
+    def _scan_pci_devices():
+        # The device directories as `glob.glob("/sys/bus/pci/devices/*")` gives them: the names
+        # the directory holds, sorted. Which chip answers last decides the reported version, so
+        # the order is part of the answer.
+        try:
+            entries = sorted(entry.path for entry in os.scandir("/sys/bus/pci/devices"))
+        except OSError:
+            return ()
+        return entries
+
+    def _read_small(path):
+        # The text of one small file, stripped, as `Path(path).read_text().strip()`: one open, one
+        # read (sysfs hands out its whole content, however long the file claims to be). A file
+        # that cannot be opened or read is missing; the original raises there and `import jax`
+        # swallows it, here such a file simply matches nothing.
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            return None
+        try:
+            block = os.read(fd, _READ_SIZE)
+            if len(block) == _READ_SIZE:  # not a sysfs file: read the rest
+                blocks = [block]
+                while len(block) == _READ_SIZE:
+                    block = os.read(fd, 4 * _READ_SIZE)
+                    blocks.append(block)
+                block = b"".join(blocks)
+            return block.decode("utf-8").strip()
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+
+    namespace["num_available_tpu_chips_and_device_id"] = probe
 
 
 class _AfterExec:
@@ -637,11 +778,15 @@ class _Watcher:
     other name `None`, which sends the import machinery on to the normal finders.
     """
 
-    def __init__(self, pause, lazy, deferred=None, lazy_jits=False):
+    def __init__(self, pause, lazy, deferred=None, lazy_jits=False, fast_probe=False):
         self.pause = pause
         self.lazy = lazy
         self.deferred = deferred or {}
-        self.after = {"jax._src.pjit": (_install_lazy_jits, "lazy_jits_installed")} if lazy_jits else {}
+        self.after = {}
+        if lazy_jits:
+            self.after["jax._src.pjit"] = (_install_lazy_jits, "lazy_jits_installed")
+        if fast_probe:
+            self.after["jax._src.hardware_utils"] = (_install_fast_tpu_probe, "fast_tpu_probe")
         self._busy = False
 
     def remove(self):
@@ -769,9 +914,10 @@ def early(carrier="pth"):
     # A module that is loaded already stays as it is.
     deferred = {name: plan for name, plan in DEFERRED_MODULES.items() if name not in sys.modules} if "defer" in options else {}
     lazy_jits = "jits" in options
-    if pause or lazy or deferred or lazy_jits:
-        sys.meta_path.insert(0, _Watcher(pause, lazy, deferred, lazy_jits))
-        info["early"] += [name for name in ("gc", "lazy", "defer", "jits") if name in options]
+    fast_probe = "tpuprobe" in options
+    if pause or lazy or deferred or lazy_jits or fast_probe:
+        sys.meta_path.insert(0, _Watcher(pause, lazy, deferred, lazy_jits, fast_probe))
+        info["early"] += [name for name in ("gc", "lazy", "defer", "jits", "tpuprobe") if name in options]
     if "preimport" in options and carrier == "pth" and _is_benchmark_process():
         if _preimport():
             info["early"].append("preimport")
