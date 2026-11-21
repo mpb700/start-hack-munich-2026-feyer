@@ -24,6 +24,9 @@ How it works
 - The quantum noise of the (single) detector is `Re(y^H N y)` with `y = S^-H w`; the
   same solve is reused as the adjoint helper for the gradient. A balanced homodyne detector
   reads two ports, the second one with a phase factor from its `phase` parameter.
+- A readout that divides the noise by the signal of the same detector puts a cotangent on the
+  signal that is a multiple of `conj(w)` at every frequency. Its adjoint is that multiple of
+  `conj(y)`, so the reverse pass needs no solve with the signal systems (`_signal_adjoint`).
 - Reverse mode is written by hand. Cotangents follow JAX's convention for complex
   values (bilinear pairing), so signal adjoints solve with `S^-T`, not `S^-H`.
 
@@ -242,9 +245,9 @@ def _splu(size, values, row_indices, column_pointers, column_order="COLAMD", sma
     )
 
 
-# Columns of the detector basis Z = S^-T [e_d] kept per frequency: upper + lower sideband of one
-# port. A balanced homodyne detector reads two ports and gets two more (`_detector_width`).
-DETECTOR_WIDTH = 2
+# A signal cotangent counts as a multiple of conj(w) when what is left after the projection is
+# below this fraction of it at every frequency (rounding leaves about 1e-16).
+ADJOINT_TOLERANCE = 1e-13
 
 # Threshold pivoting for the signal systems (see `SystemPlan._analyze`).
 DIAGONAL_PIVOT_THRESHOLD = 0.1
@@ -757,11 +760,10 @@ class SystemPlan:
     those entries and `noise_base=False` leaves out the constant noise entries.
 
     `selection` is the selection vector of the noise detector (`EntryPlan.selection`; by default
-    the stored one, which is right without a balanced homodyne detector). `width` is the number
-    of columns the detector basis Z has (`_detector_width`).
+    the stored one, which is right without a balanced homodyne detector).
     """
 
-    def __init__(self, A, n, signal_base=True, noise_base=True, selection=None, width=DETECTOR_WIDTH):
+    def __init__(self, A, n, signal_base=True, noise_base=True, selection=None):
         get = lambda key: np.asarray(A[key])
         self.n = n
         self.selection = get("noise_selection_vectors")[0, 0] if selection is None else selection
@@ -834,11 +836,7 @@ class SystemPlan:
         if noise_base:  # scatter plans for N y and N^H y (forward pass only)
             self.noise_by_row = _grouping(self.noise_rows)
             self.noise_by_col = _grouping(self.noise_cols)
-        # Rows the quantum noise detector reads. When they fit into the detector basis, the forward
-        # pass solves S^T z = e_d for each of them; Y and the signal adjoint are then combinations of z.
-        self.detector = np.nonzero(self.selection)[0]
-        self.width = width
-        self.use_basis = 0 < self.detector.size <= width
+        self.detector = np.nonzero(self.selection)[0]  # rows the quantum noise detector reads
         self.order = None
 
     def carrier_matrix(self, carrier_entries):
@@ -954,15 +952,12 @@ def _scatter_sum(values, grouping, size):
 
 
 def forward(plan, carrier_entries, signal_entries, noise_entries):
-    """Carrier, signal (m, F) and noise outputs plus the adjoint helpers Y = S^-H w, MU and Z.
-
-    Z[f] = S_f^-T [e_d for d in plan.detector] (zero-padded to `plan.width` columns). It gives
-    Y = conj(Z conj(w_d)) here and the signal adjoint S^-T signal_bar in `backward` without a
-    second factorization, whenever the cotangent of the signal lives on the detector rows.
+    """Carrier, signal (m, F) and noise outputs plus the adjoint helpers Y = S^-H w and MU.
 
     The frequencies are processed in blocks of BLOCK_FREQUENCIES. A block takes one factorization
-    call and two solve calls with two right-hand sides per frequency: first S^T Z = [e_d], then
-    S [X, MU] = [rhs, (N + N^H) Y / 2]. Everything else is evaluated for the whole block at once.
+    call and two solve calls: first S^T conj(Y) = conj(w) with one right-hand side per frequency,
+    then S [X, MU] = [rhs, (N + N^H) Y / 2] with two. Everything else is evaluated for the whole
+    block at once.
     Working block by block keeps the intermediate arrays small: all of them together would be
     several times larger than the results, and freshly allocated memory is slow.
 
@@ -975,11 +970,9 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
     carrier = carrier_lu.solve(carrier_rhs)
     w = plan.detector_weights(carrier)
     F = signal_entries.shape[0]
-    d, k = plan.detector, plan.detector.size
     signal = np.empty((m, F), complex)
     MU = np.empty((F, m), complex)
     Y = np.empty((F, m), complex)
-    Z = np.zeros((F, m, plan.width), complex)
     power = np.empty(F)
     for start in range(0, F, BLOCK_FREQUENCIES):
         block = slice(start, start + BLOCK_FREQUENCIES)
@@ -995,19 +988,11 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
             by_row = (*plan.noise_by_row[:2], position[plan.noise_by_row[2]])
             by_col = (*plan.noise_by_col[:2], position[plan.noise_by_col[2]])
             noise_row_places, noise_col_places = position[plan.noise_rows], position[plan.noise_cols]
+            weights_o = np.conj(w[order]) * scale  # D conj(w), the same for every frequency
         factors = plan.signal_factors(V)
-        if plan.use_basis:
-            basis = np.zeros((count, m, k), complex)
-            basis[:, position[d], np.arange(k)] = plan.scale[d]
-            Z_o = factors.solve(basis, trans="T")
-            Z_o /= scale[:, None]
-            Y_o = np.conj(Z_o @ np.conj(w[d]))
-            Z[block][:, order, :k] = Z_o
-        else:
-            w_o = np.empty((count, m, 1), complex)
-            w_o[:, :, 0] = w[order] * scale
-            Y_o = factors.solve(w_o, trans="H")[:, :, 0]
-            Y_o /= scale
+        Y_o = factors.solve(np.broadcast_to(weights_o[:, None], (count, m, 1)), trans="T")[:, :, 0]
+        Y_o /= scale
+        np.conj(Y_o, out=Y_o)
         q_o = _scatter_sum(N * Y_o[:, noise_col_places], by_row, m)  # N y
         qh_o = _scatter_sum(np.conj(N) * Y_o[:, noise_row_places], by_col, m)  # N^H y
         power[block] = np.einsum("fm,fm->f", np.conj(Y_o), q_o).real
@@ -1020,19 +1005,29 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
         MU[block][:, order] = solutions[:, :, 1]
         Y[block][:, order] = Y_o
     noise = np.sqrt(2 * power * NOISE_SCALE)
-    return carrier, signal, noise, Y, MU, Z
+    return carrier, signal, noise, Y, MU
 
 
-def _signal_adjoint(plan, Z, signal_bar, general_adjoint):
+def _signal_adjoint(plan, weights, Y, signal_bar, general_adjoint):
     """lam_f = S_f^-T signal_bar_f for every frequency, shape (F, m).
 
-    The detector basis Z covers a cotangent that lives on the detector rows (the usual readout).
+    `weights` are the detector weights w, and Y_f = S_f^-H w comes from the forward pass. A readout
+    that divides the noise by the signal of the same detector (the sensitivity) gives a cotangent
+    signal_bar_f = alpha_f conj(w), because signal and noise are read through the same weights.
+    Then lam_f = alpha_f conj(Y_f). This is checked on the numbers: the cotangent has to live on
+    the detector rows, and what the projection onto conj(w) leaves has to be rounding noise.
+
     Any other cotangent needs the complete signal systems again: `general_adjoint(signal_bar)`.
     """
+    d = plan.detector
     support = np.nonzero(np.any(signal_bar != 0, axis=0))[0]
-    d, k = plan.detector, plan.detector.size
-    if plan.use_basis and np.isin(support, d).all():
-        return np.einsum("fmk,fk->fm", Z[:, :, :k], signal_bar[:, d])
+    size = (np.abs(weights[d]) ** 2).sum()
+    if size > 0 and np.isin(support, d).all():
+        direction, cotangent = np.conj(weights[d]), signal_bar[:, d]
+        alpha = cotangent @ weights[d] / size
+        rest = np.abs(cotangent - alpha[:, None] * direction).sum(axis=1)
+        if np.all(rest <= ADJOINT_TOLERANCE * np.abs(cotangent).sum(axis=1)):
+            return alpha[:, None] * np.conj(Y)
     return general_adjoint(signal_bar)
 
 
@@ -1045,7 +1040,6 @@ def backward(
     noise,
     Y,
     MU,
-    Z,
     carrier_bar,
     signal_bar,
     noise_bar,
@@ -1061,7 +1055,7 @@ def backward(
     F = signal_entries.shape[0]
     carrier_bar = carrier_bar.astype(complex)
     g = noise_bar * NOISE_SCALE / noise  # d noise / d power
-    lam = _signal_adjoint(plan, Z, signal_bar, general_adjoint)
+    lam = _signal_adjoint(plan, plan.detector_weights(carrier), Y, signal_bar, general_adjoint)
     in_matrix, off_matrix = np.nonzero(plan.in_matrix)[0], np.nonzero(~plan.in_matrix)[0]
     rows, cols = plan.rows[in_matrix], plan.cols[in_matrix]
     conjugated = np.nonzero(plan.conjugated)[0]
@@ -1296,15 +1290,6 @@ def supports(arrays):
     )
 
 
-def _detector_width(arrays):
-    """
-    Columns of the detector basis Z: the upper and the lower sideband of every port the noise
-    detector reads. A `qnoised` reads one port, a balanced homodyne detector a second one, which
-    has two rows in `qhd_placing_indices`.
-    """
-    return DETECTOR_WIDTH + math.prod(arrays["qhd_placing_indices"].shape) // 3
-
-
 def _output_shapes(arrays):
     n = arrays["carrier_matrix"].shape[0]
     m = arrays["signal_matrix"].shape[0]
@@ -1313,17 +1298,17 @@ def _output_shapes(arrays):
     return n, m, F, noise_shape
 
 
-def _host_forward(n, width, static, layout, optimized_parameters, *traced):
+def _host_forward(n, static, layout, optimized_parameters, *traced):
     A = dict(static)
     A.update((key, array) for (key, _, _), array in zip(layout, traced))
     entry_plan = EntryPlan(A)
     entries = entry_plan.values(optimized_parameters)  # derivatives are only taped in the backward pass
-    plan = SystemPlan(A, n, selection=entry_plan.selection(optimized_parameters), width=width)
-    carrier, signal, noise, Y, MU, Z = forward(plan, *entries)
-    return carrier[:, None], signal, noise.reshape(-1), Y, MU, Z, *_pack(A, layout)
+    plan = SystemPlan(A, n, selection=entry_plan.selection(optimized_parameters))
+    carrier, signal, noise, Y, MU = forward(plan, *entries)
+    return carrier[:, None], signal, noise.reshape(-1), Y, MU, *_pack(A, layout)
 
 
-def _host_backward(static, layout, optimized_parameters, carrier, signal, noise, Y, MU, Z, *rest):
+def _host_backward(static, layout, optimized_parameters, carrier, signal, noise, Y, MU, *rest):
     carrier_bar, signal_bar, noise_bar = rest[-3:]
     A = dict(static)
     A.update(_unpack(layout, rest[:-3]))
@@ -1333,7 +1318,7 @@ def _host_backward(static, layout, optimized_parameters, carrier, signal, noise,
     carrier = np.asarray(carrier)[:, 0]
     noise, noise_bar = np.asarray(noise).reshape(F), np.asarray(noise_bar, float).reshape(F)
     MU = np.asarray(MU)
-    detector = dict(selection=entry_plan.selection(optimized_parameters), width=Z.shape[2])
+    detector = dict(selection=entry_plan.selection(optimized_parameters))
 
     def general_adjoint(signal_bar):
         # A cotangent outside the detector rows: factorize the complete signal systems once more.
@@ -1350,7 +1335,6 @@ def _host_backward(static, layout, optimized_parameters, carrier, signal, noise,
         noise,
         np.asarray(Y),
         MU,
-        np.asarray(Z),
         np.asarray(carrier_bar)[:, 0],
         np.asarray(signal_bar).T,
         noise_bar,
@@ -1367,11 +1351,10 @@ def _host_backward(static, layout, optimized_parameters, carrier, signal, noise,
 
 def _forward_callback(optimized_parameters, host):
     """
-    The simulation outputs, the residuals of the reverse pass (Y, MU, Z and the packed host arrays
+    The simulation outputs, the residuals of the reverse pass (Y, MU and the packed host arrays
     that are not static) and what the reverse callback needs besides: static arrays and layout.
     """
     n, m, F, noise_shape = _output_shapes(host)
-    width = _detector_width(host)
     static, layout, traced = _split_host(host)
     packed_integers, packed_reals = _packed_sizes(layout)
     result_shapes = [
@@ -1380,14 +1363,13 @@ def _forward_callback(optimized_parameters, host):
         jax.ShapeDtypeStruct((F,), jnp.float64),
         jax.ShapeDtypeStruct((F, m), jnp.complex128),
         jax.ShapeDtypeStruct((F, m), jnp.complex128),
-        jax.ShapeDtypeStruct((F, m, width), jnp.complex128),
     ]
     if packed_integers:
         result_shapes.append(jax.ShapeDtypeStruct((packed_integers,), jnp.int64))
     if packed_reals:
         result_shapes.append(jax.ShapeDtypeStruct((packed_reals,), jnp.float64))
     carrier, signal, noise, *residuals = jax.pure_callback(
-        functools.partial(_host_forward, n, width, static, layout),
+        functools.partial(_host_forward, n, static, layout),
         tuple(result_shapes),
         optimized_parameters,
         *traced,

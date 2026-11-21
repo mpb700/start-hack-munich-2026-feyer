@@ -75,8 +75,15 @@ carrier, signal, noise, *helpers = out
 carrier_bar = np.zeros_like(carrier)
 signal_bar = np.zeros_like(signal)
 rng = np.random.default_rng(0)
-d = np.nonzero(np.asarray(arrays["noise_selection_vectors"])[0, 0])[0]
-signal_bar[d] = rng.normal(size=(d.size, signal.shape[1])) + 1j * rng.normal(size=(d.size, signal.shape[1]))
+# A cotangent as the benchmark readout gives it: at every frequency a multiple of conj(w), with the
+# detector weights w (since round 10 any other cotangent costs a second factorization).
+selection = np.asarray(arrays["noise_selection_vectors"])[0, 0]
+d, n_carrier = np.nonzero(selection)[0], carrier.shape[0]
+weights = selection.astype(complex)
+weights[:n_carrier] *= carrier[:, 0]
+weights[n_carrier : 2 * n_carrier] = np.conj(weights[n_carrier : 2 * n_carrier] * carrier[:, 0])
+alpha = rng.normal(size=signal.shape[1]) + 1j * rng.normal(size=signal.shape[1])
+signal_bar[d] = np.conj(weights[d])[:, None] * alpha
 noise_bar = rng.normal(size=noise.shape)
 backward_keys = () if sparse else getattr(fast, "BACKWARD_KEYS", fast.HOST_KEYS)  # older states pass host arrays
 backward_host = [h for k, h in zip(fast.HOST_KEYS, host) if k in backward_keys]
