@@ -1,7 +1,7 @@
 # SX2 — `jax_disable_most_optimizations` (deferred / NOT submission)
 
 **Status:** validierter, **nicht aktiver** Kandidat. **Kein Merge, keine Änderung an
-`ac7aedc`/`submission`.** Tag: `s-group-d-det-superlu-sx2` (Commit `4e63631`, Branch `track/10-sx2`).
+`ac7aedc`/`submission`.** Tag: `s-group-d-det-superlu-sx2` (Commit `99e0909` = Code `4e63631` + finalisierte Doku, Branch `track/10-sx2`).
 **Feyer-Freigabe steht aus** — ohne sie wird SX2 nicht eingereicht (Lead-Entscheid B, 03:29 UTC).
 
 ## Idee
