@@ -82,7 +82,7 @@ Runde 10 gegen Runde 9 (`8a4d2fe` → Runde 10), je 12 Läufe im Wechsel, Median
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
 
-## Skalierung mit der Gittergrösse (21.11., 15:35, auf Noels Frage)
+## Skalierung mit der Gittergrösse (21.11., 16:10, auf Noels Frage)
 
 `uifo(size)` baut dasselbe Modell wie das Fixture als N×N-Gitter. Gemessen mit `runs/noel/scaling.py` auf dem Mac (Akku), Zufalls-Setup mit einfachem Detektor und Zufallswerten, `jit(value_and_grad(loss))` mit dem Loss aus `benchmark.py`, 101 Frequenzen, Stand `55ecbc3`:
 
