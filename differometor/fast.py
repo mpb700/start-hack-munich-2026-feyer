@@ -1,9 +1,10 @@
 """
 Fast host-side simulation path: sparse LU solves with SuperLU and a hand-written adjoint.
 
-`differometor.simulate.simulate` dispatches here for setups without parameter linking,
-without homodyne detectors (qhd), with exactly one quantum noise detector and a single
-carrier operating point. Everything else uses the original JAX implementation.
+`differometor.simulate.simulate` dispatches here for setups with exactly one quantum noise
+detector (a `qnoised` or a balanced homodyne detector `qhd`) and a single carrier operating
+point. Parameter links are covered for the linking functions listed in `LINK_RULES`. Everything
+else uses the original JAX implementation (see `supports`).
 
 How it works
 ------------
@@ -21,7 +22,8 @@ How it works
   BLOCK_FREQUENCIES: a block is one block-diagonal system for SuperLU (`_BlockLU`), with one
   factorization call and two solve calls.
 - The quantum noise of the (single) detector is `Re(y^H N y)` with `y = S^-H w`; the
-  same solve is reused as the adjoint helper for the gradient.
+  same solve is reused as the adjoint helper for the gradient. A balanced homodyne detector
+  reads two ports, the second one with a phase factor from its `phase` parameter.
 - Reverse mode is written by hand. Cotangents follow JAX's convention for complex
   values (bilinear pairing), so signal adjoints solve with `S^-T`, not `S^-H`.
 
@@ -240,7 +242,8 @@ def _splu(size, values, row_indices, column_pointers, column_order="COLAMD", sma
     )
 
 
-# Columns of the detector basis Z = S^-T [e_d] kept per frequency (upper + lower sideband of one port).
+# Columns of the detector basis Z = S^-T [e_d] kept per frequency: upper + lower sideband of one
+# port. A balanced homodyne detector reads two ports and gets two more (`_detector_width`).
 DETECTOR_WIDTH = 2
 
 # Threshold pivoting for the signal systems (see `SystemPlan._analyze`).
@@ -598,6 +601,20 @@ class _EntryBlock:
         return parameters_bar
 
 
+# Linking functions (derived parameters, e.g. a signal amplitude that follows `sqrt(laser power)`)
+# the fast path evaluates on the host: the NumPy value and the derivative as a function of input
+# and value. Setups with any other linking function use the original JAX implementation.
+LINK_RULES = ((jnp.sqrt, np.sqrt, lambda x, y: 0.5 / y),)
+
+
+def _link_rule(function):
+    """(value, derivative) for a linking function of `LINK_RULES`, None for any other function."""
+    for known, value, derivative in LINK_RULES:
+        if function is known:
+            return value, derivative
+    return None
+
+
 class EntryPlan:
     """Parameter expansion and component evaluation (mirrors the start of `simulate`)."""
 
@@ -616,9 +633,22 @@ class EntryPlan:
             if np.any(np.imag(values) != 0):
                 raise ValueError("fast path requires real changing values")
         changing = self.signal_changing_indices
+        # Parameter links: slot `link_targets[i]` gets `rule(slot link_sources[i])`.
+        self.link_sources = np.asarray(A["linked_indices"], np.intp).reshape(-1)
+        self.link_targets = np.asarray(A["indices_to_link"], np.intp).reshape(-1)
+        self.link_rules = []
+        if self.link_sources.size:
+            from differometor.build import LINKING_FUNCTIONS
+
+            self.link_rules = [_link_rule(LINKING_FUNCTIONS[i]) for i in np.asarray(A["linking_function_indices"]).reshape(-1)]
+        # Balanced homodyne detector: the selection entries `qhd_places` carry a phase factor.
+        self.qhd_parameter_indices = np.asarray(A["qhd_parameter_indices"], np.intp).reshape(-1)
+        self.qhd_places = np.asarray(A["qhd_placing_indices"], np.intp).reshape(-1, 3)[:, 2]
+        self.selection_base = np.asarray(A["noise_selection_vectors"])[0, 0]
         # Parameter slots whose derivative reaches a design variable (see `pullback`).
         differentiable = np.zeros(self.base.size, bool)
         differentiable[self.optimized_parameter_indices] = True
+        differentiable[self.link_targets] = differentiable[self.link_sources]
         differentiable[self.carrier_changing_indices] = False
         differentiable[self.signal_changing_indices] = False
         block = lambda name, changing=(): _EntryBlock(
@@ -626,9 +656,35 @@ class EntryPlan:
         )
         self.carrier, self.signal, self.noise = block("carrier"), block("signal", changing), block("noise", changing)
 
-    def _rows(self, optimized_parameters):
+    def _design_row(self, optimized_parameters):
+        """The parameter row with the design variables in place, before the links."""
         P = self.base.copy()
         P[self.optimized_parameter_indices] = np.asarray(optimized_parameters, float)[self.optimized_value_indices]
+        return P
+
+    def _row(self, optimized_parameters):
+        """The parameter row with design variables and linked parameters, before the sweeps."""
+        P = self._design_row(optimized_parameters)
+        if self.link_targets.size:
+            # All links read the row as it is before any of them writes (as in `simulate_jax`).
+            sources = P[self.link_sources]
+            P[self.link_targets] = [value(x) for (value, _), x in zip(self.link_rules, sources)]
+        return P
+
+    def selection(self, optimized_parameters):
+        """
+        The selection vector of the noise detector. A balanced homodyne detector multiplies the
+        entries of its second port by `exp(1j * phase)`, with the phase parameter in degrees.
+        """
+        selection = self.selection_base
+        if self.qhd_parameter_indices.size:
+            phases = np.exp(1j * np.radians(self._row(optimized_parameters)[self.qhd_parameter_indices]))
+            selection = selection.astype(complex)
+            np.multiply.at(selection, self.qhd_places, phases)
+        return selection
+
+    def _rows(self, optimized_parameters):
+        P = self._row(optimized_parameters)
         carrier_rows = np.tile(P, (self.carrier_changing_values.shape[1], 1))
         carrier_rows[:, self.carrier_changing_indices] = np.real(self.carrier_changing_values).T
         signal_rows = np.tile(carrier_rows[0], (self.signal_changing_values.shape[1], 1))
@@ -647,7 +703,13 @@ class EntryPlan:
         noise, noise_tape = self.noise.run(signal_rows)
         return (carrier[0], signal, noise), (carrier_tape, signal_tape, noise_tape)
 
-    def pullback(self, tape, carrier_bar, signal_bar, noise_bar, value_count):
+    def pullback(self, tape, carrier_bar, signal_bar, noise_bar, value_count, optimized_parameters=None, selection_bar=None):
+        """
+        The gradient with respect to the design variables from the cotangents of the entries.
+
+        `optimized_parameters` is needed when the setup has parameter links, `selection_bar` (the
+        cotangent of `selection`) when it has a balanced homodyne detector.
+        """
         carrier_tape, signal_tape, noise_tape = tape
         parameter_count = self.base.size
         signal_rows_bar = self.signal.back(signal_tape, signal_bar, parameter_count) + self.noise.back(
@@ -656,6 +718,18 @@ class EntryPlan:
         signal_rows_bar[self.signal_changing_indices] = 0.0  # overwritten by the sweep values
         P_bar = self.carrier.back(carrier_tape, carrier_bar[None], parameter_count) + signal_rows_bar
         P_bar[self.carrier_changing_indices] = 0.0
+        if self.qhd_parameter_indices.size and selection_bar is not None:
+            # selection = base * exp(1j * radians(phase)): d selection / d phase = 1j * pi / 180 * selection
+            places = self.qhd_places
+            phase_bar = (selection_bar[places] * 1j * self.selection(optimized_parameters)[places]).real * (np.pi / 180)
+            np.add.at(P_bar, self.qhd_parameter_indices, phase_bar)
+        if self.link_targets.size:
+            sources = self._design_row(optimized_parameters)[self.link_sources]
+            targets_bar = P_bar[self.link_targets]
+            P_bar[self.link_targets] = 0.0  # overwritten by the links
+            with np.errstate(divide="ignore", invalid="ignore"):
+                slopes = np.array([derivative(x, value(x)) for (value, derivative), x in zip(self.link_rules, sources)])
+                np.add.at(P_bar, self.link_sources, slopes * targets_bar)
         return np.bincount(self.optimized_value_indices, P_bar[self.optimized_parameter_indices], value_count)
 
 
@@ -681,12 +755,16 @@ class SystemPlan:
     pass only needs the entries that depend on parameters: the ones written by component
     functions or multiplied by the carrier. `signal_base=False` restricts the signal pattern to
     those entries and `noise_base=False` leaves out the constant noise entries.
+
+    `selection` is the selection vector of the noise detector (`EntryPlan.selection`; by default
+    the stored one, which is right without a balanced homodyne detector). `width` is the number
+    of columns the detector basis Z has (`_detector_width`).
     """
 
-    def __init__(self, A, n, signal_base=True, noise_base=True):
+    def __init__(self, A, n, signal_base=True, noise_base=True, selection=None, width=DETECTOR_WIDTH):
         get = lambda key: np.asarray(A[key])
         self.n = n
-        self.selection = get("noise_selection_vectors")[0, 0]
+        self.selection = get("noise_selection_vectors")[0, 0] if selection is None else selection
         self.m = m = self.selection.size
 
         # Carrier system: the n x n matrix in CSC order, followed by the right-hand side (column
@@ -756,10 +834,11 @@ class SystemPlan:
         if noise_base:  # scatter plans for N y and N^H y (forward pass only)
             self.noise_by_row = _grouping(self.noise_rows)
             self.noise_by_col = _grouping(self.noise_cols)
-        # Rows the quantum noise detector reads. When they fit into DETECTOR_WIDTH, the forward pass
-        # solves S^T z = e_d for each of them; Y and the signal adjoint are then combinations of z.
+        # Rows the quantum noise detector reads. When they fit into the detector basis, the forward
+        # pass solves S^T z = e_d for each of them; Y and the signal adjoint are then combinations of z.
         self.detector = np.nonzero(self.selection)[0]
-        self.use_basis = 0 < self.detector.size <= DETECTOR_WIDTH
+        self.width = width
+        self.use_basis = 0 < self.detector.size <= width
         self.order = None
 
     def carrier_matrix(self, carrier_entries):
@@ -877,7 +956,7 @@ def _scatter_sum(values, grouping, size):
 def forward(plan, carrier_entries, signal_entries, noise_entries):
     """Carrier, signal (m, F) and noise outputs plus the adjoint helpers Y = S^-H w, MU and Z.
 
-    Z[f] = S_f^-T [e_d for d in plan.detector] (zero-padded to DETECTOR_WIDTH columns). It gives
+    Z[f] = S_f^-T [e_d for d in plan.detector] (zero-padded to `plan.width` columns). It gives
     Y = conj(Z conj(w_d)) here and the signal adjoint S^-T signal_bar in `backward` without a
     second factorization, whenever the cotangent of the signal lives on the detector rows.
 
@@ -900,7 +979,7 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
     signal = np.empty((m, F), complex)
     MU = np.empty((F, m), complex)
     Y = np.empty((F, m), complex)
-    Z = np.zeros((F, m, DETECTOR_WIDTH), complex)
+    Z = np.zeros((F, m, plan.width), complex)
     power = np.empty(F)
     for start in range(0, F, BLOCK_FREQUENCIES):
         block = slice(start, start + BLOCK_FREQUENCIES)
@@ -1040,6 +1119,19 @@ def backward(
     return carrier_entries_bar, signal_entries_bar, noise_entries_bar
 
 
+def selection_cotangent(carrier, noise, MU, noise_bar):
+    """
+    Cotangent of the selection vector of the noise detector, shape (m,). The detector weights are
+    w = selection * carrier for the upper sideband, conj(selection * carrier) for the lower one
+    and the selection itself elsewhere; their cotangent is the `w_bar` of `backward`.
+    """
+    n = carrier.shape[0]
+    selection_bar = 2 * np.conj((noise_bar * NOISE_SCALE / noise) @ MU)
+    selection_bar[:n] *= carrier
+    selection_bar[n : 2 * n] = np.conj(selection_bar[n : 2 * n]) * carrier
+    return selection_bar
+
+
 # ---------------------------------------------------------------------
 # JAX integration
 # ---------------------------------------------------------------------
@@ -1069,6 +1161,11 @@ ARRAY_KEYS = (
     "noise_function_indices",
     "noise_output_indices",
     "noise_system_matrix_indices",
+    "qhd_parameter_indices",
+    "qhd_placing_indices",
+    "linked_indices",
+    "linking_function_indices",
+    "indices_to_link",
 )
 MATRIX_KEYS = ("carrier_matrix", "signal_matrix", "noise_matrix")
 # Names of the arrays a host callback works with: the plain arrays, then both leaves of every
@@ -1168,20 +1265,44 @@ def _unpack(layout, packed):
     return A
 
 
+def _links_supported(arrays):
+    """Parameter links are covered when their functions are known at trace time and in `LINK_RULES`."""
+    if arrays["linked_indices"].shape[0] == 0:
+        return True
+    indices = arrays["linking_function_indices"]
+    if not isinstance(indices, StaticArray):
+        return False
+    from differometor.build import LINKING_FUNCTIONS
+
+    return all(0 <= i < len(LINKING_FUNCTIONS) and _link_rule(LINKING_FUNCTIONS[i]) is not None for i in indices.reshape(-1).tolist())
+
+
 def supports(arrays):
-    """Static (type/shape/dtype only) check whether the fast path covers these `simulate` arguments."""
+    """
+    Static check whether the fast path covers these `simulate` arguments (types, shapes, dtypes
+    and the linking functions): one quantum noise detector, which may be a balanced homodyne
+    detector, a single carrier operating point, real design variables and known parameter links.
+    """
     optimized = arrays["optimized_parameters"]
     return (
         all(isinstance(arrays[key], SparseMatrix) for key in MATRIX_KEYS)
-        and arrays["linked_indices"].shape[0] == 0
-        and arrays["qhd_parameter_indices"].shape[0] == 0
         and arrays["noise_selection_vectors"].shape[0] == 1
         and arrays["carrier_changing_values"].ndim == 2
         and arrays["carrier_changing_values"].shape[1] == 1
         and arrays["signal_changing_values"].ndim == 2
         and optimized.ndim == 1
         and not jnp.issubdtype(optimized.dtype, jnp.complexfloating)
+        and _links_supported(arrays)
     )
+
+
+def _detector_width(arrays):
+    """
+    Columns of the detector basis Z: the upper and the lower sideband of every port the noise
+    detector reads. A `qnoised` reads one port, a balanced homodyne detector a second one, which
+    has two rows in `qhd_placing_indices`.
+    """
+    return DETECTOR_WIDTH + math.prod(arrays["qhd_placing_indices"].shape) // 3
 
 
 def _output_shapes(arrays):
@@ -1192,11 +1313,13 @@ def _output_shapes(arrays):
     return n, m, F, noise_shape
 
 
-def _host_forward(n, static, layout, optimized_parameters, *traced):
+def _host_forward(n, width, static, layout, optimized_parameters, *traced):
     A = dict(static)
     A.update((key, array) for (key, _, _), array in zip(layout, traced))
-    entries = EntryPlan(A).values(optimized_parameters)  # derivatives are only taped in the backward pass
-    carrier, signal, noise, Y, MU, Z = forward(SystemPlan(A, n), *entries)
+    entry_plan = EntryPlan(A)
+    entries = entry_plan.values(optimized_parameters)  # derivatives are only taped in the backward pass
+    plan = SystemPlan(A, n, selection=entry_plan.selection(optimized_parameters), width=width)
+    carrier, signal, noise, Y, MU, Z = forward(plan, *entries)
     return carrier[:, None], signal, noise.reshape(-1), Y, MU, Z, *_pack(A, layout)
 
 
@@ -1208,29 +1331,37 @@ def _host_backward(static, layout, optimized_parameters, carrier, signal, noise,
     entry_plan = EntryPlan(A)
     (carrier_entries, signal_entries, _), tape = entry_plan.entries(optimized_parameters)
     carrier = np.asarray(carrier)[:, 0]
+    noise, noise_bar = np.asarray(noise).reshape(F), np.asarray(noise_bar, float).reshape(F)
+    MU = np.asarray(MU)
+    detector = dict(selection=entry_plan.selection(optimized_parameters), width=Z.shape[2])
 
     def general_adjoint(signal_bar):
         # A cotangent outside the detector rows: factorize the complete signal systems once more.
-        plan = SystemPlan(A, n, noise_base=False)
+        plan = SystemPlan(A, n, noise_base=False, **detector)
         factors = plan.signal_factors(plan.signal_values(signal_entries, carrier))
         return plan.solve_transposed(factors, signal_bar)
 
     entries_bar = backward(
-        SystemPlan(A, n, signal_base=False, noise_base=False),
+        SystemPlan(A, n, signal_base=False, noise_base=False, **detector),
         carrier_entries,
         signal_entries,
         carrier,
         np.asarray(signal).T,
-        np.asarray(noise).reshape(F),
+        noise,
         np.asarray(Y),
-        np.asarray(MU),
+        MU,
         np.asarray(Z),
         np.asarray(carrier_bar)[:, 0],
         np.asarray(signal_bar).T,
-        np.asarray(noise_bar, float).reshape(F),
+        noise_bar,
         general_adjoint,
     )
-    gradient = entry_plan.pullback(tape, *entries_bar, value_count=optimized_parameters.shape[0])
+    selection_bar = None
+    if entry_plan.qhd_parameter_indices.size:  # a homodyne phase may be a design variable
+        selection_bar = selection_cotangent(carrier, noise, MU, noise_bar)
+    gradient = entry_plan.pullback(
+        tape, *entries_bar, value_count=optimized_parameters.shape[0], optimized_parameters=optimized_parameters, selection_bar=selection_bar
+    )
     return gradient.astype(optimized_parameters.dtype)
 
 
@@ -1240,6 +1371,7 @@ def _forward_callback(optimized_parameters, host):
     that are not static) and what the reverse callback needs besides: static arrays and layout.
     """
     n, m, F, noise_shape = _output_shapes(host)
+    width = _detector_width(host)
     static, layout, traced = _split_host(host)
     packed_integers, packed_reals = _packed_sizes(layout)
     result_shapes = [
@@ -1248,14 +1380,14 @@ def _forward_callback(optimized_parameters, host):
         jax.ShapeDtypeStruct((F,), jnp.float64),
         jax.ShapeDtypeStruct((F, m), jnp.complex128),
         jax.ShapeDtypeStruct((F, m), jnp.complex128),
-        jax.ShapeDtypeStruct((F, m, DETECTOR_WIDTH), jnp.complex128),
+        jax.ShapeDtypeStruct((F, m, width), jnp.complex128),
     ]
     if packed_integers:
         result_shapes.append(jax.ShapeDtypeStruct((packed_integers,), jnp.int64))
     if packed_reals:
         result_shapes.append(jax.ShapeDtypeStruct((packed_reals,), jnp.float64))
     carrier, signal, noise, *residuals = jax.pure_callback(
-        functools.partial(_host_forward, n, static, layout),
+        functools.partial(_host_forward, n, width, static, layout),
         tuple(result_shapes),
         optimized_parameters,
         *traced,

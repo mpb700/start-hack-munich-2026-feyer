@@ -91,11 +91,12 @@ def simulate(
     """
     Run one full simulation pass: carrier, signal, and quantum noise.
 
-    Same arguments and outputs as `simulate_jax`. Setups without parameter linking,
-    without homodyne detectors (qhd), with a single quantum noise detector and a single
-    carrier operating point use the sparse host path in `differometor.fast` (a
-    `jax.custom_vjp` around `jax.pure_callback`, differentiable with respect to
-    `optimized_parameters` in reverse mode). All other setups use `simulate_jax`.
+    Same arguments and outputs as `simulate_jax`. Setups with a single quantum noise detector
+    (a `qnoised` or a balanced homodyne detector `qhd`) and a single carrier operating point use
+    the sparse host path in `differometor.fast` (a `jax.custom_vjp` around `jax.pure_callback`,
+    differentiable with respect to `optimized_parameters` in reverse mode). Parameter links are
+    covered for the linking functions in `differometor.fast.LINK_RULES`. All other setups use
+    `simulate_jax` (see `differometor.fast.supports`).
 
     The three system matrices are `differometor.fast.SparseMatrix` objects (coordinate form), as
     `run_build_step` returns them. Dense arrays are accepted as well, but then the call takes

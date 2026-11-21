@@ -1,8 +1,10 @@
 """Dispatcher check on other public setups: fast path vs original JAX (outputs and full gradient).
 
 aLIGO (space / frequency modulation): one noise detector, no qhd, no links  -> fast path
-aLIGO (amplitude modulation): linked parameter                             -> JAX fallback
-Voyager: qhd homodyne detector with two noise detectors                    -> JAX fallback
+aLIGO (amplitude modulation): linked parameter (sqrt of the laser power)   -> fast path
+Voyager: balanced homodyne detector (qhd)                                  -> fast path
+
+Random UIFO setups, also with a balanced homodyne readout: runs/noel/test_variants.py
 """
 import os
 import json
@@ -59,5 +61,5 @@ s = check("aLIGO space_modulation", *aligo("space_modulation"), True)
 err = np.abs(np.log(np.asarray(s)) - np.log(aligo_data["sensitivities"])).max()
 print(f"  aLIGO vs public test data: max |log diff| {err:.2e} (example uses atol 1e-6)")
 check("aLIGO frequency_modulation", *aligo("frequency_modulation"), True)
-check("aLIGO amplitude_modulation (linked)", *aligo("amplitude_modulation"), False)
-check("Voyager (qhd)", *voyager(), False)
+check("aLIGO amplitude_modulation (linked)", *aligo("amplitude_modulation"), True)
+check("Voyager (qhd)", *voyager(), True)
