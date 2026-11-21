@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 15:25, nach der zehnten Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 16:41, nach der elften Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -80,7 +80,26 @@ Runde 10 gegen Runde 9 (`8a4d2fe` → Runde 10), je 12 Läufe im Wechsel, Median
 | Docker, Fixture mit Balanced Homodyne (6 Läufe) | 536,3 → **525,0 ms** | 219,0 → 207,9 ms | 34,0 → 27,1 ms | 14,5 → 12,9 ms | 41,1 → 33,7 ms |
 | Docker, Zufalls-UIFO Seed 0 mit Homodyne (6 Läufe) | 530,3 → **520,8 ms** | 213,9 → 205,7 ms | 33,9 → 27,6 ms | 13,5 → 12,4 ms | 40,1 → 33,4 ms |
 
+Runde 11 gegen Runde 10 (`10ffc61` → `2e1cef1`), je 14 Läufe im Wechsel, Median / Minimum, auf Akku:
+
+| Umgebung | Erstlauf gesamt | Gradient (inkl. Sensitivity) | Warm |
+| --- | --- | --- | --- |
+| Mac | 443,7 / 435,3 → **443,4 / 434,7 ms** | 10,2 / 9,9 → 9,7 / 9,3 ms | 27,7 → 27,2 ms |
+| Docker `--cpus 1` | 513,5 / 508,8 → **512,9 / 507,4 ms** | 13,3 / 12,3 → 12,8 / 12,1 ms | 33,5 → 33,2 ms |
+
+Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar ist er in der Gradient-Phase und direkt am Rückwärts-Callback (Mac, je 40 Aufrufe, dreimal im Wechsel: 7,28 bis 7,36 → 7,00 bis 7,03 ms).
+
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## Was in Runde 11 geändert wurde
+
+| Nr. | Änderung | Datei | Gewinn im Wechselvergleich |
+| --- | --- | --- | --- |
+| 25 | Ein Produkt statt zwei pro Matrixeintrag im Rückwärtslauf (offene Idee 9). Gilt die Abkürzung aus Runde 10 (`lam = alpha * conj(Y)`), dann ist der Kotangent eines Eintrags `-conj(Y[row]) * (alpha * X + 2 g * MU)[column]`. Die Adjungierte `lam` wird nicht mehr als Feld angelegt, und pro Frequenzblock gibt es zwei statt vier Zugriffe mit Indexlisten | `fast.py` (`backward`, `_adjoint_factors`) | Gradient-Phase: Mac 10,2 → 9,7 ms, Docker 13,3 → 12,8 ms. Rückwärts-Callback allein: 7,3 → 7,0 ms |
+
+Zu Nr. 25: Carrier, Signal, Noise, Sensitivity und Powers des Benchmarks sind bitgleich, der Gradient ändert sich um 1,7e-14 (relativ zum Maximum). Alle Prüfskripte und `test_variants.py` mit denselben Werten. Für jeden anderen Kotangenten (zweite Zerlegung) rechnet die Schleife wie bisher mit zwei Produkten, `test_adjoint.py` prüft diesen Zweig. Zurücknehmen: `git revert 2e1cef1`.
+
+Damit sind die regelkonformen Ideen oberhalb von rund 0,5 ms aufgebraucht. Was bleibt, steht unter «Offene Ideen»: Nr. 1 bis 3 liegen bei 0,3 bis 1 ms, Nr. 8 lässt sich nur auf x86 beurteilen, der Rest braucht eine Zusage von Feyer oder Noel.
 
 ## Skalierung mit der Gittergrösse (21.11., 16:10, auf Noels Frage)
 
@@ -483,7 +502,7 @@ python runs/noel/test_build.py . --compare alt.npz neu.npz   # 946 arrays compar
 python benchmark.py --repeats 3 --output orig.json --save-arrays orig.npz
 ```
 
-Sollwerte (Stand Runde 10, auf Noels M4, unverändert seit Runde 2):
+Sollwerte (Stand Runde 11, auf Noels M4, unverändert seit Runde 2):
 
 | Grösse | Abweichung gegen das Original-JAX (max, relativ zum Maximum) |
 | --- | ---: |
@@ -531,7 +550,6 @@ Sollwerte (Stand Runde 10, auf Noels M4, unverändert seit Runde 2):
 | 4b | Speicherbereinigung von Python vor `import jax` abschalten | gemessen: rund 20 ms (478 bis 491 statt 500 bis 511 ms) | Geht nur ausserhalb von `differometor/` (Startskript, Umgebung oder `benchmark.py`). Das ist Feyers Entscheid, nicht unserer |
 | 4c | Zwischenergebnisse des Forward-Laufs im Prozess behalten statt als Residuen durch JAX zu schicken (LU-Faktoren, Pläne) | geschätzt 3 ms in Docker, nicht gemessen | Widerspricht der Abmachung «keine Caches». Bräuchte Noels Ja und einen zustandslosen Rückfall |
 | 5 | `noel` auf Joels x86-Maschine messen (AMD EPYC, `taskset -c 14 python benchmark.py --cpus 1`), im Wechsel mit `6b67cfd` (Stand vor Runde 5). Die Bündelung aus Runde 5 lässt sich nach Runde 6 nicht mehr einzeln zurücknehmen. Sie ist jetzt Teil des Entwurfs, und ihr Nachteil im Warmlauf ist weg | – | Joel fragen |
-| 9 | Im Rückwärtslauf die beiden Produkte pro Matrixeintrag zusammenfassen, wenn die Abkürzung aus Runde 10 gilt: `-conj(Y[rows]) * (alpha * X + 2 g * MU)[cols]` statt `-lam[rows] * X[cols] - 2 g * conj(Y[rows]) * MU[cols]` (zwei Zugriffe mit Indexlisten statt vier) | geschätzt 0,5 ms auf dem Mac, 0,7 ms in Docker, auf dem Xeon vielleicht 1,5 ms | An der Messgrenze. Zweiter Zweig in der Schleife, Zahlen ändern sich auf Rundungsniveau |
 | 8 | Vorab-Elimination der einfachen Unbekannten nach Philips Muster (`_CondensedLU`: 751 → 200 Unbekannte in drei Stufen). In Runde 8 auf dem Mac verworfen (2,4 ms langsamer). Auf x86 ist SuperLU laut Philip 3,5-mal langsamer als auf dem M4, mit rund 0,5 µs festem Aufwand pro Spalte, und dort hat es bei ihm den Vorwärtslauf von 105,8 auf 82,1 ms gebracht | unbekannt für unseren Stand (balancierte Zerlegung mit 6'100 Faktoreinträgen). Philips Stand ohne eigene C-Zerlegung liegt auf dem Xeon im Forward bei 57 ms, `noel` bei 63 ms | Lässt sich nur auf x86 beurteilen. Auf dem Mac und in Docker (aarch64) sieht man den Effekt nicht |
 | 6 | Falls ohne `__pycache__` gewertet wird (Frage B4): Code, den der Benchmark nie ausführt, in Module auslagern, die erst bei Bedarf geladen werden (Teile von `build.py` und `components.py`) | unbekannt, höchstens einige der 13 ms | Mit `__pycache__` bringt es nichts. Erst nach Feyers Antwort |
 
@@ -541,11 +559,11 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 
 | Branch | Zuletzt gesehen | Stand in `noel` |
 | --- | --- | --- |
-| `origin/philip` | `5934330` (21.11. 15:05), unverändert am 21.11. 15:14. Neu seit `ab82e42`: `b3676de`, `5934330` | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
-| `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), unverändert am 21.11. 15:14. Neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
+| `origin/philip` | `8435944` (21.11. 15:28). Neu seit `ab82e42`: `b3676de`, `5934330` und `8435944` (nur die Ergebnisdateien der drei VM-Messreihen, kein Code) | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
+| `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), unverändert am 21.11. 16:35. Neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), am 21.11. 15:06 auf dem Server gelöscht (der Commit steckt in `origin/max/lu-once`) | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
-| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 15:14, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
-| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 15:14 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
+| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 16:35, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
+| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 16:35 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `5eece1d` | unverändertes Kit |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)

@@ -250,6 +250,10 @@ Eine Änderung: Der Vorwärtslauf löst für das Rauschen nur noch ein Gleichung
 
 - **Korrektheit:** Carrier, Signal und Powers bitgleich. Noise, Sensitivity und Gradient ändern sich auf Rundungsniveau (höchstens 3,5e-12 relativ). Alle Prüfskripte mit denselben Werten, `PASS` überall.
 
+## Elfte Runde vom 21.11. (Branch `noel`)
+
+Eine kleine Änderung im Rückwärtslauf: Mit der Abkürzung aus der zehnten Runde braucht der Kotangent eines Matrixeintrags nur noch ein Produkt statt zwei. Gradient-Phase: Mac 10,2 → 9,7 ms, Docker mit einer CPU 13,3 → 12,8 ms (14 Läufe im Wechsel). Ausgaben bitgleich, Gradient ändert sich um 1,7e-14. Alle Prüfskripte mit denselben Werten.
+
 ## Wo die verbleibende Zeit steckt
 
 Im First-Run (ca. 0,4 s auf macOS) steckt kaum noch Physik:
