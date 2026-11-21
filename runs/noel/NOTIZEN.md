@@ -1,8 +1,8 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 20:12, nach der zwölften Runde und Philips eigenem Homodyne-Umbau. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 21:15, nach Runde 14. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
-**Zuerst lesen:** «Stand 20:12» und «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
+**Zuerst lesen:** «Runde 14», «Stand 20:12» und «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
 ## Messwerte
 
@@ -90,6 +90,34 @@ Runde 11 gegen Runde 10 (`10ffc61` → `2e1cef1`), je 14 Läufe im Wechsel, Medi
 Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar ist er in der Gradient-Phase und direkt am Rückwärts-Callback (Mac, je 40 Aufrufe, dreimal im Wechsel: 7,28 bis 7,36 → 7,00 bis 7,03 ms).
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## Runde 14 (21.11., 20:55 bis 21:15): Schleife alle 30 Minuten, Blick in Philips Stand
+
+Noel um 20:54: «starte wieder caffeinate und arbeite alle 30 minuten, die anderen Teams holen auf». `caffeinate -is` läuft, der Laptop hängt am Strom, die Schleife feuert jetzt um :13 und :43 (Auftrag `a794ba8a`, der alte Zwei-Stunden-Auftrag ist gelöscht).
+
+**Branches:** `origin/philip-fastest` steht auf `8e7c4f1` (20:37, nur `runs/philip/test_genauigkeit.py` neu). `main` (`50341f9`) und alle anderen unverändert. Runde 13 (20:35) war ohne Änderung: 8 % Akku, nichts gemessen.
+
+**`noel`:** keine Änderung. Regelkonform ist oberhalb von 0,5 ms nichts mehr offen (siehe Runde 11). Für die Rangliste zählt Philips Linie: `philip-fastest` 305,9 ms auf dem Xeon, `noel` (`91baf9c`) dort 688 bis 718 ms auf Philips Varianten.
+
+**Vergleich der Host-Arbeit** (Mac, je 20 Aufrufe, Median, öffentliches Fixture, `philip-fastest` hier ohne seine C-Zerlegung, die nur unter x86 kompiliert):
+
+| Stand | Build | Vorwärts-Callback | Rückwärts-Callback | Vorwärts + Rückwärts |
+| --- | ---: | ---: | ---: | ---: |
+| `noel` (`2b792de`) | 4,4 ms | 18,6 ms | 7,1 ms | 25,7 ms |
+| `philip-fastest` (`8e7c4f1`) | 4,45 ms | 17,2 ms (wertet die Einträge schon hier mit Ableitungen aus) | 1,65 ms | 18,9 ms |
+
+Die 6,8 ms Unterschied kommen aus Philips Zwischenspeicher: Sein Rückwärtslauf verwendet Pläne, Einträge samt Ableitungen und beide Zerlegungen des Vorwärtslaufs wieder. Die einzelnen Bausteine sind gleich schnell wie bei uns (Einträge mit Ableitungen je 2,8 ms, Pläne 1,6 gegen 1,4 ms, Signalwerte 0,8 gegen 1,0 ms). Aus `noel` lässt sich dort also nichts Schnelleres einsetzen.
+
+**Wo auf dem Xeon noch Zeit liegt** (aus Philips Zahlen, Vorwärtslauf im ersten Aufruf 36,6 ms: Einträge mit Ableitungen 10, native Zerlegung 7,7, Signalwerte 5,8, Lösungen 5,3, Pläne 4,5, Rausch-Summen 2,1, Carrier 1,2):
+
+| Hebel | Schätzung auf dem Xeon | Stand |
+| --- | --- | --- |
+| Frequenzblöcke im Vorwärtslauf wie in `noel` (je 16 Frequenzen, Arbeitsfelder werden wiederverwendet statt für 101 Frequenzen frisch angelegt). Philip zählt rund 11'000 Seitenfehler im ersten Vorwärtslauf | 3 bis 8 ms (Philips Schätzung, seine offene Idee 1) | Braucht in `pattern_lu.c` eine Trennung von Analyse (3,2 ms, einmal) und Numerik (pro Block). `plu_factor` macht heute beides in einem Aufruf. Der C-Code kompiliert nur unter x86, hier also nicht messbar |
+| Rausch-Summen `q` und `qh` direkt in die rechte Seite streuen statt zwei Felder (F, m) anzulegen, `signal` und `MU` ohne Umkopieren aus `solutions` | rund 1 ms (etwa 1'500 Seitenfehler weniger) | Nicht gebaut. Auf dem Mac nicht messbar |
+| Build weiter straffen (offene Idee 3). Der Build ist reines Python und kostet auf dem Xeon rund 17 ms, hier 4,4 ms | 2 bis 3 ms | Offen, in beiden Linien derselbe Code. Jede der 519 Aufrufstellen von `set_instructions` einzeln |
+| Imports (183 von 306 ms) | unbekannt | Daran arbeitet Philip (`_startup.py`). Auf dem Mac gemessen: Von den Standardmodulen, die `benchmark.py` vor `jax` lädt, ist `importlib.metadata` mit Abstand das teuerste |
+
+Die Kopie von `main` (`r14`) und die Arbeitskopien dieser Runde sind wieder entfernt. `main` und `philip-fastest` sind unverändert.
 
 ## Stand 20:12: Philip hat Balanced Homodyne selbst eingebaut, `main` noch nicht
 
@@ -611,7 +639,7 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 | `origin/Joel` | `9f79a5f` (21.11. 17:53), neu seit `76e799f`: nur das README (Verweis auf das neue Tag `joels-fastest` = `ac7aedc`). Baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
 | `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 18:36 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `50341f9` (21.11. 17:30). Bis dahin das unveränderte Kit `5eece1d`, seither Philips Linie `philip-nacht` mit `noel` bis `cb902d7` (Runde 7) | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Für `main` gibt es den Patch aus Runde 12. Das unveränderte Kit ist weiter `5eece1d` |
-| `origin/philip-fastest` | `11e96b4` (21.11. 20:04). `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
+| `origin/philip-fastest` | `8e7c4f1` (21.11. 20:37, seit `11e96b4` nur ein Testskript). `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
 
@@ -656,4 +684,5 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - Eine Änderung bleibt nur, wenn sie im Wechselvergleich schneller ist und alle Prüfungen unverändert gut ausfallen.
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.
 - Discord (Noel am 21.11. gegen 14:35): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:13: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
+- Noel am 21.11. um 20:54: caffeinate wieder starten, Schleife alle 30 Minuten (Auftrag `a794ba8a`, :13 und :43).
 - Seit Runde 9 (21.11.) deckt der schnelle Weg Balanced-Homodyne-Detektoren und Verknüpfungen mit `jnp.sqrt` ab. Auftrag: Feyers Zusatz zu den Setup-Varianten, von Noel weitergegeben.
