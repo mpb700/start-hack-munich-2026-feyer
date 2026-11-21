@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 23:45, nach Runde 19. **Zwei neue Patches für `philip-fastest` (Basis `9a31fa1`, noch nicht übernommen): `patches/philip-fastest-rows.patch` (Lösungen im Layout des C-Kerns) und danach `patches/philip-fastest-import.patch` (Import von `differometor`).** Die Patches aus Runde 15 und 16 sind seit 21:49 in `philip-fastest` und `main` (`9a31fa1`). **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 23:52, nach Runde 19. **Drei neue Patches für `philip-fastest` (Basis `9a31fa1`, noch nicht übernommen), in dieser Reihenfolge anzuwenden: `patches/philip-fastest-rows.patch` (Lösungen im Layout des C-Kerns), `patches/philip-fastest-import.patch` (Import von `differometor`), `patches/philip-fastest-memory.patch` (weniger frisch angefasster Speicher).** Zusammen emuliert auf x86-64: Erstlauf −6,4 ms, alle Ausgaben bitgleich. Die Messung auf dem Xeon steht aus. Die Patches aus Runde 15 und 16 sind seit 21:49 in `philip-fastest` und `main` (`9a31fa1`). **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -108,13 +108,26 @@ Noel um 21:02 auf die Frage, ob die Schleife Patches für Philips Stand bauen so
 
 | [`patches/philip-fastest-import.patch`](patches/philip-fastest-import.patch) | Import von `differometor` (`_tuning.py`, `fast.py`): die zwei Prüfungen von JAX-Funktionen in `_tuning.apply()` lesen den kompilierten Code statt den Quelltext (`inspect.getsource`), `_sparsetools` wird erst bei Bedarf geladen. **Nach dem Rows-Patch anwenden** (beide ändern `fast.py` und seinen Bytecode) | Docker arm64 `--cpus 1` mit Bytecode, zweimal 25 frische Prozesse je Stand: `import differometor` **3,86 → 2,68 ms**. Die beiden `getsource`-Aufrufe allein: 2,57 ms → 0,02 ms (M4). Im x86-Lauf wird `_sparsetools` nie geladen. **Xeon: noch nicht gemessen**, Schätzung 2 bis 2,5 ms | **offen**, siehe «Runde 19» |
 
-Die ersten beiden sind seit 21:49 in `philip-fastest` und `main`. Die Xeon-Zahlen stehen unter «Runde 18». Die zwei neuen setzen auf `9a31fa1` auf, in dieser Reihenfolge:
+| [`patches/philip-fastest-memory.patch`](patches/philip-fastest-memory.patch) | Speicher (`fast.py`): Carrier-System ohne dichte Felder, `signal_values` und der Rückwärtslauf bilden ihre Produkte in Blöcken von 128 Zeilen statt über ganze Zwischenfelder. **Nach Rows und Import anwenden** | Seitenfehler im ersten Aufruf auf x86-64 mit C-Kern (alle drei Patches gegen `9a31fa1`): Vorwärts **5'703 → 4'028**, Rückwärts **1'996 → 1'313**. Host-Zeiten M4 warm: `signal_values` 0,52 → 0,45 ms, Rückwärts-Callback 1,68 → 1,50 ms. **Xeon: noch nicht gemessen** | **offen**, siehe «Runde 19» |
+
+Die ersten beiden sind seit 21:49 in `philip-fastest` und `main`. Die Xeon-Zahlen stehen unter «Runde 18». Die drei neuen setzen auf `9a31fa1` auf, in dieser Reihenfolge (jeder ändert `fast.py` und dessen Bytecode, einzeln herausgreifen geht darum nur für den ersten):
 
 ```bash
 git fetch origin && git checkout philip-fastest
 git show origin/noel:runs/noel/patches/philip-fastest-rows.patch | git am
 git show origin/noel:runs/noel/patches/philip-fastest-import.patch | git am
+git show origin/noel:runs/noel/patches/philip-fastest-memory.patch | git am
 ```
+
+**Alle drei zusammen gegen `9a31fa1`** (frische Prozesse im Wechsel, Median / Minimum in ms, alle `PASS`, Fehler gegen die Referenz unverändert 5,3743e-06):
+
+| Umgebung | Erstlauf | Imports | Forward | Gradient | Warm gesamt |
+| --- | --- | --- | --- | --- | --- |
+| x86-64 emuliert (Rosetta, C-Kern), 8 Läufe | 1'054,2 / 1'045,3 → **1'047,8 / 1'042,7** | 362,5 → 360,8 | 51,1 → 48,1 | 14,6 → 14,4 | 22,5 / 21,8 → 21,0 / 20,2 (Forward 17,3 → 15,6) |
+| Docker arm64 `--cpus 1` (ohne C-Kern, mit Bytecode), 12 Läufe | 184,7 / 182,7 → **181,9 / 179,2** | 111,6 → 110,6 | 26,2 → 25,2 | 5,6 → 4,7 | 24,7 → 23,5 |
+| Mac (ohne C-Kern), 12 Läufe | 185,3 / 182,7 → **183,6 / 181,3** | 118,5 → 117,1 | 21,2 → 21,8 | 3,5 → 3,3 | 21,0 → 20,6 |
+
+Auf dem Mac steigt die Forward-Phase um 0,6 ms, weil `_sparsetools` dort jetzt im ersten Vorwärtslauf geladen wird statt beim Import (mit dem C-Kern entfällt das Laden ganz). Unter Rosetta sind die absoluten Erstlauf-Zeiten dreimal so hoch wie auf dem Xeon, weil der x86-Code erst übersetzt wird. Die Differenzen sind darum nur ein Anhaltspunkt. **Schätzung für den Xeon: 5 bis 7 ms im Erstlauf** (Lösungen ohne Kopien rund 2,4, Import rund 2,4, rund 2'400 Seitenfehler weniger rund 2,4, abzüglich Überschneidungen). Das sind rund 2 % von 318 ms.
 
 Die beiden älteren (schon angewendet, nur zur Vollständigkeit):
 
@@ -140,7 +153,7 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
 
-**Runde 19 (21.11., 22:20 bis 23:45): Noels Auftrag «nochmal alles geben, innovative Ansätze, testen und verwerfen».** Basis `9a31fa1` (`philip-fastest` und `main`, unverändert). Zwei Patches behalten, zwei Mess-Erkenntnisse, eine Regelfrage.
+**Runde 19 (21.11., 22:20 bis 23:52): Noels Auftrag «nochmal alles geben, innovative Ansätze, testen und verwerfen».** Basis `9a31fa1` (`philip-fastest` und `main`, unverändert). Drei Patches behalten, zwei Mess-Erkenntnisse, eine Regelfrage.
 
 *1. Behalten: `patches/philip-fastest-rows.patch`.* Der C-Kern (`pattern_lu.c`) rechnet auf Feldern mit einer Zeile pro Unbekannter, Form (m, F). Python hat ihm rechte Seiten der Form (F, m, k) gegeben. `plu_solve_fmk` kopiert jede davon in ein Arbeitsfeld um und die Lösung wieder zurück (je 1,2 MB, quer zum Speicher), danach hat `forward` die Lösung für `signal` noch einmal transponiert und `backward` `conj(Y)` und `MU` wieder zurück. Jetzt:
 
@@ -188,11 +201,19 @@ Geprüft: `benchmark.py` `PASS` auf Mac, Docker arm64 und x86-64 emuliert. Array
 
 Gemessen in Docker arm64 `--cpus 1` mit Bytecode, zweimal 25 frische Prozesse je Stand im Wechsel: `import differometor` 3,87 und 3,85 ms → **2,69 und 2,67 ms** (Minimum 3,72 → 2,60). Auf arm64 wandern davon 0,4 ms in den Vorwärtslauf (dort wird `_sparsetools` gebraucht), auf x86 mit C-Kern nicht. Geprüft: `test_tuning`, `test_startup`, `test_compat`, `test_condensed`, `test_forward_cache`, `test_reverse`, `check_setups` laufen durch. Arrays auf dem Mac bitgleich zum Stand mit dem Rows-Patch, im x86-Image bitgleich zu `9a31fa1`, `PASS`. Nach einem ganzen Benchmark-Lauf im x86-Image ist `scipy.sparse._sparsetools` nicht geladen. Der Patch enthält den neu erzeugten Bytecode von `_tuning.py` und `fast.py`.
 
-*7. Sonst gemessen.* Im C-Kern kostet die Analyse (Pivotfolge) 3,0 ms gegen 2,3 ms Numerik (emuliert): Die Markowitz-Suche besucht 279'000 Einträge für 379 Pivots, eine auf wenige Zeilen und Spalten begrenzte Suche wäre der übliche Ausweg (Philips Code, hier nicht messbar).
+*7. Behalten: `patches/philip-fastest-memory.patch`* (auf Rows und Import). Die drei grössten vermeidbaren Posten aus der Tabelle unter 4:
+
+- **Carrier-System.** Bisher: dichtes Feld (n, n+1) mit den Basiswerten, eine Kopie davon pro Vorwärtslauf, Einträge hineinschreiben, an den Musterpositionen wieder herauslesen (zweimal 1,3 MB für 286 Unbekannte, dazu die Maske). Jetzt hält `SystemPlan` das Muster (Schlüssel `Spalte * n + Zeile`, wie beim Signal-System), die Basiswerte in CSC-Reihenfolge und die Plätze der geschriebenen Einträge als kurze Arrays. `carrier_matrix` kopiert zwei kurze Vektoren und schreibt die Einträge hinein. Muster und Werte sind dieselben wie vorher, die Zerlegung also bitgleich.
+- **`signal_values`.** Die Platzierungs-Einträge werden `-pre * carrier`. Das Vorzeichen sitzt jetzt auf dem kurzen Carrier-Faktor, und die Zeilen werden in Blöcken von 128 geschrieben. Das Zwischenfeld eines Blocks (200 kB) wird vom nächsten wiederverwendet, statt dreimal 1,6 MB frisch anzufassen. `(-a)·c` und `a·(-c)` sind bitgleich.
+- **Rückwärtslauf.** `np.take(right, cols)` für alle besuchten Einträge auf einmal (2,1 MB) und `signal * alpha` als Ganzes (1,2 MB) laufen jetzt in Blöcken von 128 Zeilen (`_ROW_BLOCK`). Dieselben Operationen, nur zeilenweise gruppiert.
+
+Seitenfehler im ersten Aufruf (x86-64 emuliert, C-Kern, je ein Prozess): Vorwärts 5'703 (`9a31fa1`) → 5'036 (Rows) → **4'028** (alle drei), Rückwärts 1'996 → 1'516 → **1'313**. Die Zählung schwankt je nach Zustand des Allokators um einige Hundert (mit dem Import-Patch allein waren es vorwärts 5'460). Docker läuft mit THP `always`, Ubuntu auf einer VM üblicherweise mit `madvise`: Dort dürften es eher mehr Seitenfehler sein, die Einsparung also eher grösser. Geprüft: alle zwölf Skripte unter `runs/philip` und `runs/flags` sowie `check_setups.py` mit unveränderten Kennzahlen, `test_variants.py --quick` (WORST 1,99e-11 und 3,02e-12), `variant_run.py` `PASS` im x86-Image (Homodyne-Fixture, Zufalls-UIFO 0, veränderte Werte) und im arm64-Image (Homodyne-Fixture). Arrays: auf dem Mac bitgleich zum Stand davor, im x86-Image **bitgleich zu `9a31fa1`**.
+
+*8. Sonst gemessen.* Im C-Kern kostet die Analyse (Pivotfolge) 3,0 ms gegen 2,3 ms Numerik (emuliert): Die Markowitz-Suche besucht 279'000 Einträge für 379 Pivots, eine auf wenige Zeilen und Spalten begrenzte Suche wäre der übliche Ausweg (Philips Code, hier nicht messbar).
 
 *Stand der Branches um 23:13:* `philip-fastest` und `main` unverändert `9a31fa1`. `origin/philip` neu auf `6f26dec` (22:31), nur Ergebnisdateien: `v2-2209` (das andere Team mit neuem Stand `final/combined-v2` und eigenem C++-Löser: 763,9 ms gegen unsere 321,1 ms auf dem Xeon, Arrays auf 1e-9 gleich), `tuning-2220` (Schalter einzeln: nur bitgleiche Kompilieroptionen 377,6 ms, ohne XLA-Optionen 455,3, `_tuning` aus 489,5, auch Start-Massnahmen aus 593,9 gegen 315,8 ms mit allem) und `schalter-2226` (`INLINE_DISPATCH` und `SHORT_LOCATIONS` bringen nichts, dazu eine Aufschlüsselung der Import-Phase). Philip misst also gerade selbst an den Imports. `Joel`, `max/lu-once` und `sx*` unverändert.
 
-**Nächste Hebel für Philips Linie**, in dieser Reihenfolge: (a) `signal_values` ohne die Zwischenfelder (rund 800 Seitenfehler), (b) Carrier-Matrix dünn besetzt aufbauen (rund 600), (c) `backward` in Zeilenblöcken (rund 700), (d) begrenzte Pivotsuche im C-Kern. Zusammen geschätzt 2 bis 3 ms auf dem Xeon.
+**Nächste Hebel für Philips Linie:** (a) Einträge mit Ableitungen (`_EntryBlock.run` und die Dual-Produkte, zusammen noch rund 1'450 Seitenfehler im ersten Vorwärtslauf), (b) die Rausch-Summen ohne umsortierte Kopien (`_group_sum`, rund 220), (c) begrenzte Pivotsuche im C-Kern (Analyse 3,0 ms emuliert, nur auf x86 messbar), (d) die Regelfrage zu `importlib.metadata` (rund 9 ms auf dem Xeon, siehe 5). Was nach den drei Patches im ersten Vorwärtslauf an Seitenfehlern bleibt: Ergebnisfelder der Lösungen 875, `run` 844, Dual-Produkte 606, `signal_values` 484, Rausch-Teil 660, C-Kern 257.
 
 **Runde 18 (21.11., 22:13 bis 22:15): Philip hat beide Patches übernommen und auf dem Xeon gemessen.** `origin/philip-fastest` und `origin/main` stehen auf `9a31fa1` (21:49): `13bd58d` ist der Build-Patch, `9a31fa1` der Vorwärts-Patch, unverändert übernommen. `origin/philip` (`3983044`, 21:59) enthält die Messungen dazu.
 
