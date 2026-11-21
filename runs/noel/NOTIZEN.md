@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 19:10, nach der zwölften Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 19:08, nach der zwölften Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -91,7 +91,7 @@ Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar 
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
 
-## Runde 12 (21.11., 18:36 bis 19:10): `main` ist jetzt Philips Stand, Patch für Balanced Homodyne
+## Runde 12 (21.11., 18:36 bis 19:08): `main` ist jetzt Philips Stand, Patch für Balanced Homodyne
 
 **Lage:** `origin/main` steht seit 17:30 auf Philips Linie (`50341f9`: Tuning-Modul, eigene C-Zerlegung, Zwischenspeicher, Start-Massnahmen, mitgelieferter Bytecode). `origin/philip-fastest` (`efad894`, 18:26) geht noch weiter. Philips Messungen auf dem Xeon Platinum 8468: `main` 355,8 ms, `philip-fastest` 315,3 ms im Erstlauf (Auftrag `neu-1804`). `noel` lag dort bei 726 ms (Stand Runde 8). Die Abgabe wird also aus dieser Linie kommen, nicht aus `noel`.
 
@@ -112,7 +112,7 @@ Inhalt des Patches:
 - Der mitgelieferte Bytecode der beiden Module ist neu erzeugt (`compileall --invalidation-mode checked-hash`, Python 3.12.15, Hash stimmt mit der Quelle überein).
 - `runs/check_setups.py` erwartet für aLIGO verknüpft und Voyager den schnellen Weg. Neu dazu: `runs/noel/test_variants.py`, `variant_fixture.py`, `variant_run.py`.
 
-Geprüft auf Noels Mac (ohne die C-Zerlegung, die nur unter x86-Linux lädt):
+Geprüft auf Noels Mac (dort ohne die C-Zerlegung, die nur unter x86-Linux lädt) und in einem emulierten x86-64-Container:
 
 | Prüfung | Ergebnis mit Patch |
 | --- | --- |
@@ -123,8 +123,9 @@ Geprüft auf Noels Mac (ohne die C-Zerlegung, die nur unter x86-Linux lädt):
 | Homodyne-Variante des Fixtures (`variant_run.py`) | `PASS`, 340 ms statt 9'837 ms, Fehler gegen die Referenz aus dem Original-Code 8,3e-08 |
 | Zufalls-UIFO Seed 0 (Homodyne) und Seed 2 (Detektor) | `PASS`, 345 und 341 ms |
 | `philip-fastest` mit Patch | Fixture `PASS` 299 ms, Homodyne-Variante `PASS` 305 ms |
+| `main` mit Patch als x86-64-Image unter Rosetta, C-Zerlegung geladen (`NATIVE_LU True`), `variant_run.py --image` | Fixture und 14 Varianten `PASS` (6 davon mit Homodyne). Fehler gegen die Referenz aus dem Original-Code höchstens 8,3e-08, Fixture 5,374e-06 wie überall. Die Zeiten aus der Emulation sagen nichts aus |
 
-Die Zeiten dieser Runde sind nur Grössenordnungen: Der Deckel war bis etwa 19:00 zu, der Akku bei 20 bis 23 %. Aus demselben Grund gab es in dieser Runde keine Optimierung an `noel` und keinen Wechselvergleich.
+Nicht gemessen ist der Patch auf dem echten Xeon. Das kann nur Philip mit seinem VM-Skript. Die Zeiten dieser Runde sind nur Grössenordnungen: Der Deckel war bis etwa 19:00 zu, der Akku bei 20 bis 23 %. Aus demselben Grund gab es in dieser Runde keine Optimierung an `noel` und keinen Wechselvergleich.
 
 Was an `main` auffällt und in die Regelfragen gehört (Feststellung, keine Wertung): Eine Datei `statistics.py` im Wurzelverzeichnis fängt das `import statistics` von `benchmark.py` ab, um vor `import jax` Start-Massnahmen auszuführen. Dazu kommen mitgelieferte `.pyc`-Dateien, eine `.pth`-Datei unter `packaging/`, Eingriffe in JAX und XLA für den ganzen Prozess (`_tuning.py`) und eine vorkompilierte Bibliothek (`_native/libpattern_lu.so`). Das sind die Fragen B4, B5 und B6 aus `FRAGEN_AN_FEYER.md`.
 
