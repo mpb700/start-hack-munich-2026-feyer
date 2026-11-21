@@ -1,6 +1,6 @@
 # Fragen an Feyer
 
-Stand: Sa 21.11.2026, 15:40, Branch `noel` (Philips Branch plus Max' `lu-once` und `nacht` plus neun Runden vom 21.11.).
+Stand: Sa 21.11.2026, 15:25, Branch `noel` (Philips Branch plus Max' `lu-once` und `nacht` plus zehn Runden vom 21.11.).
 Zu stellen am Sa 21.11. bei der Challenge-Präsentation (11–12 Uhr) oder direkt beim Mentor.
 
 ## Unser Stand in drei Sätzen (zum Erklären vor der Frage)

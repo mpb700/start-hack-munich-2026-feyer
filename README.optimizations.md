@@ -238,6 +238,18 @@ Der schnelle Weg deckt jetzt ab:
 - **Gegen das Original-JAX:** `runs/noel/test_variants.py` vergleicht 21 Zufalls-Setups (1×1 bis 4×4, alle drei Modulationsarten, beide Auslesen). Grösste Abweichung von `ln s`: 4,9e-7, Gradient 2,4e-8.
 - Für das öffentliche Fixture ändert sich nichts: gleiche Ausgaben, gleiche Prüfwerte.
 
+## Zehnte Runde vom 21.11. (Branch `noel`)
+
+Eine Änderung: Der Vorwärtslauf löst für das Rauschen nur noch ein Gleichungssystem pro Frequenz statt zwei (bei Balanced Homodyne statt vier). Bisher hielt er für den Rückwärtslauf eine Basis `Z` bereit. Beim üblichen Readout (Rauschen geteilt durch das Signal desselben Detektors) ist die gesuchte Adjungierte aber ein Vielfaches einer Grösse, die der Vorwärtslauf ohnehin berechnet. Das wird an den Zahlen geprüft. Jedes andere Readout rechnet wie bisher mit einer zweiten Zerlegung.
+
+| Umgebung | Erstlauf gesamt | Forward | Warm |
+|---|---|---|---|
+| Apple M4, macOS (12 Läufe im Wechsel) | 0,447 → **0,444 s** | 23,7 → 21,5 ms | 30,0 → 27,6 ms |
+| Docker, Linux aarch64, `--cpus 1` (12 Läufe im Wechsel) | 0,519 → **0,513 s** | 29,7 → 26,6 ms | 36,7 → 33,5 ms |
+| Docker, Fixture mit Balanced Homodyne (6 Läufe im Wechsel) | 0,536 → **0,525 s** | 34,0 → 27,1 ms | 41,1 → 33,7 ms |
+
+- **Korrektheit:** Carrier, Signal und Powers bitgleich. Noise, Sensitivity und Gradient ändern sich auf Rundungsniveau (höchstens 3,5e-12 relativ). Alle Prüfskripte mit denselben Werten, `PASS` überall.
+
 ## Wo die verbleibende Zeit steckt
 
 Im First-Run (ca. 0,4 s auf macOS) steckt kaum noch Physik:

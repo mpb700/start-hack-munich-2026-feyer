@@ -1,8 +1,8 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 15:40, nach der neunten Runde (Setup-Varianten). Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 15:25, nach der zehnten Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
-**Zuerst lesen:** «Runde 9: Setup-Varianten» und «Stand der anderen Branches». Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
+**Zuerst lesen:** «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
 ## Messwerte
 
@@ -71,11 +71,34 @@ Runde 8 gegen Runde 7 (`57e20fe` → `b6b1119`), je 16 Läufe im Wechsel, Median
 | Mac | 454,6 → **453,0 ms** | 131,5 → 130,5 ms | 7,7 → 6,8 ms | 24,4 → 24,0 ms | 9,8 → 9,7 ms | 30,8 → 30,4 ms |
 | Docker `--cpus 1` | 520,6 → **516,2 ms** | 204,7 → 201,4 ms | 8,2 → 6,5 ms | 30,3 → 30,2 ms | 13,1 → 12,5 ms | 37,1 → 37,4 ms |
 
+Runde 10 gegen Runde 9 (`8a4d2fe` → Runde 10), je 12 Läufe im Wechsel, Median / Minimum, auf Akku:
+
+| Umgebung | Erstlauf gesamt | Erstlauf ohne Imports | Forward | Gradient (inkl. Sensitivity) | Warm |
+| --- | --- | --- | --- | --- | --- |
+| Mac | 447,4 / 442,2 → **444,2 / 439,4 ms** | 126,8 → 124,2 ms | 23,7 → 21,5 ms | 10,3 → 10,2 ms | 30,0 → 27,6 ms |
+| Docker `--cpus 1` | 518,6 / 513,2 → **512,7 / 508,6 ms** | 202,6 → 199,1 ms | 29,7 → 26,6 ms | 13,6 → 13,2 ms | 36,7 → 33,5 ms |
+| Docker, Fixture mit Balanced Homodyne (6 Läufe) | 536,3 → **525,0 ms** | 219,0 → 207,9 ms | 34,0 → 27,1 ms | 14,5 → 12,9 ms | 41,1 → 33,7 ms |
+| Docker, Zufalls-UIFO Seed 0 mit Homodyne (6 Läufe) | 530,3 → **520,8 ms** | 213,9 → 205,7 ms | 33,9 → 27,6 ms | 13,5 → 12,4 ms | 40,1 → 33,4 ms |
+
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## Was in Runde 10 geändert wurde
+
+| Nr. | Änderung | Datei | Gewinn im Wechselvergleich |
+| --- | --- | --- | --- |
+| 24 | Die Detektor-Basis `Z` entfällt (offene Idee 7, bei Philip seine Nr. 14). Der Vorwärtslauf löst pro Frequenz nur noch `S^T conj(Y) = conj(w)` mit einer rechten Seite statt zwei (Detektor) oder vier (Balanced Homodyne). Im Rückwärtslauf ist die Signal-Adjungierte `alpha_f * conj(Y_f)`, wenn der Kotangent des Signals bei jeder Frequenz ein Vielfaches von `conj(w)` ist (`_signal_adjoint`). Das Residuum `Z` (2,4 bzw. 4,9 MB) wandert nicht mehr durch JAX | `fast.py` | Docker: Erstlauf ohne Imports 202,6 → 199,1 ms, Forward 29,7 → 26,6 ms, warm 36,7 → 33,5 ms. Mac: Forward 23,7 → 21,5 ms, warm 30,0 → 27,6 ms. Homodyne-Varianten in Docker 8 bis 11 ms |
+
+Zu Nr. 24:
+
+- **Wann die Abkürzung gilt:** Eine Sensitivität teilt das Rauschen durch das Signal desselben Detektors. Signal und Rauschen werden durch dieselben Gewichte `w` gelesen, darum ist der Kotangent des Signals `alpha_f * conj(w)`. Geprüft wird das an den Zahlen: Der Kotangent darf nur auf den Detektorzeilen liegen, und der Rest nach der Projektion auf `conj(w)` muss bei jeder Frequenz unter 1e-13 des Kotangenten liegen (`ADJOINT_TOLERANCE`). Gemessen: öffentliches Fixture 4,4e-16, UIFO mit Homodyne 1,3e-16 und 3,4e-16, Voyager 2,4e-16, aLIGO 1,9e-16.
+- **Jeder andere Kotangent** (anderes Readout, Homodyne-Phase ungleich 180°, Verlust auf beliebigen Signalzeilen) nimmt `general_adjoint`: eine zweite Zerlegung im Rückwärtslauf, wie bisher für Kotangenten ausserhalb der Detektorzeilen. Das kostet dort rund 10 ms mehr als mit der Basis, das Ergebnis ist dasselbe. `test_adjoint.py` prüft diesen Weg.
+- **Zahlen:** Carrier, Signal und Powers des Benchmarks sind bitgleich. Noise ändert sich um 9,4e-16, Sensitivity um 4,1e-16, Gradient um 3,5e-12 (relativ zum Maximum), `ln s` um höchstens 7e-15. Alle Prüfskripte mit denselben Werten wie vorher (Voyager Sensitivity 7,30e-13 statt 7,27e-13).
+- `runs/noel/profil.py` nimmt für den Rückwärtslauf jetzt einen Kotangenten wie das Benchmark-Readout. Vorher war er zufällig, das wäre seit dieser Runde der langsame Weg.
+- Zurücknehmen: den Commit dieser Runde mit `git revert`.
 
 ## Runde 9: Setup-Varianten (Feyers Zusatz vom 21.11.)
 
-Feyer im Discord (von Noel am 21.11. um 14:25 weitergegeben): «The goal is a simulator speedup that works beyond a specific setup. So the final evaluation will use a similar optical setup like the one included in the GitHub repo, but with slightly different parameters and components. Your simulator submissions should still work with that slight setup variation». Dazu Jonathan Klimesch um 14:30: Die Schlussbewertung nutzt eine logische CPU wie `--cpus 1`, und die JIT-Kompilation zählt zur Gesamtzeit (kompletter Erstlauf).
+Feyer im Discord (von Noel am 21.11. gegen 14:35 weitergegeben): «The goal is a simulator speedup that works beyond a specific setup. So the final evaluation will use a similar optical setup like the one included in the GitHub repo, but with slightly different parameters and components. Your simulator submissions should still work with that slight setup variation». Dazu Jonathan Klimesch um 14:30: Die Schlussbewertung nutzt eine logische CPU wie `--cpus 1`, und die JIT-Kompilation zählt zur Gesamtzeit (kompletter Erstlauf).
 
 **Was das für uns heisst (am Code nachgeprüft):**
 
@@ -87,7 +110,7 @@ Feyer im Discord (von Noel am 21.11. um 14:25 weitergegeben): «The goal is a si
 
 | Nr. | Änderung | Wirkung |
 | --- | --- | --- |
-| 22 | Balanced-Homodyne-Detektor (`qhd`) im schnellen Weg. Der Auswahlvektor des Rausch-Detektors bekommt auf dem Host den Phasenfaktor `exp(1j * phase)` an den Einträgen des zweiten Ports (`EntryPlan.selection`, wie `lax.scatter_mul` im Original). Die Detektor-Basis `Z` hat dann vier statt zwei Spalten (`_detector_width`, aus der Form von `qhd_placing_indices`). Die Ableitung nach der Phase ist eingebaut, falls sie eine Designvariable ist (`selection_cotangent`) | Homodyne-Variante des Fixtures: 10'059 → 452 ms auf dem Mac |
+| 22 | Balanced-Homodyne-Detektor (`qhd`) im schnellen Weg. Der Auswahlvektor des Rausch-Detektors bekommt auf dem Host den Phasenfaktor `exp(1j * phase)` an den Einträgen des zweiten Ports (`EntryPlan.selection`, wie `lax.scatter_mul` im Original). Die Detektor-Basis `Z` hatte dann vier statt zwei Spalten (seit Runde 10 gibt es sie nicht mehr). Die Ableitung nach der Phase ist eingebaut, falls sie eine Designvariable ist (`selection_cotangent`) | Homodyne-Variante des Fixtures: 10'059 → 452 ms auf dem Mac |
 | 23 | Verknüpfte Parameter (Amplitudenmodulation: Signalamplitude = `sqrt(Laserleistung)`) im schnellen Weg, für die Funktionen in `fast.LINK_RULES` (heute `jnp.sqrt`). Vorwärts auf der Parameterzeile, rückwärts mit der Kettenregel. Unbekannte Funktionen gehen weiter über JAX | aLIGO, Voyager und UIFO mit Amplitudenmodulation laufen schnell. In einem JSON-Fixture kann eine solche Verknüpfung nicht stehen (eine Python-Funktion lässt sich nicht speichern), das ist also Vorsorge |
 
 Für das öffentliche Fixture ändert sich nichts: Benchmark-Ausgaben und alle Prüfwerte sind gleich, die Zeit auch (je 9 bzw. 8 Läufe im Wechsel, Median / Minimum): Mac 449,6 / 446,9 → 449,4 / 444,1 ms, Docker `--cpus 1` 518,5 / 514,9 → 518,6 / 513,2 ms.
@@ -102,7 +125,7 @@ Für das öffentliche Fixture ändert sich nichts: Benchmark-Ausgaben und alle P
 | Zufalls-UIFO mit Zufallswerten, Seeds 2, 3, 5 | Detektor | 459,8 bis 480,6 ms | 519,4 und 530,8 ms | höchstens 6,6e-11 |
 | Zufalls-UIFO mit Zufallswerten, Seeds 0, 1, 4, 6, 7 | Homodyne | 460,4 bis 489,7 ms | 538,9 bis 551,0 ms | höchstens 7,6e-10 |
 
-Homodyne-Setups sind in Docker rund 20 ms langsamer als Detektor-Setups: Forward 33 bis 34 statt 29 bis 30 ms (vier statt zwei Spalten der Detektor-Basis, grösseres System), dazu 5 ms in der Kompilation des Readouts und 4 ms in der des Gradienten (das ist der Readout von `benchmark.py`, nicht unser Code).
+Stand Runde 9 (seit Runde 10 sind es noch rund 8 ms, siehe Messwerte): Homodyne-Setups sind in Docker rund 20 ms langsamer als Detektor-Setups: Forward 33 bis 34 statt 29 bis 30 ms (vier statt zwei Spalten der Detektor-Basis, grösseres System), dazu 5 ms in der Kompilation des Readouts und 4 ms in der des Gradienten (das ist der Readout von `benchmark.py`, nicht unser Code).
 
 **Tests:** `runs/noel/test_variants.py` vergleicht 21 Varianten mit `simulate_jax` (Zufalls-UIFOs 1×1 bis 4×4, alle drei Modulationsarten, beide Auslesen, Homodyne-Phase als Designvariable). Alle laufen über den schnellen Weg. Grösste Abweichung von `ln s`: 4,9e-07 (Mac) bzw. 7,7e-07 (Docker), Gradient 2,4e-08 bzw. 2,8e-07. `runs/check_setups.py` erwartet jetzt für aLIGO mit Amplitudenmodulation und für Voyager den schnellen Weg.
 
@@ -165,7 +188,9 @@ In Runde 8 gemessen und nicht übernommen:
 
 Am 21.11. um 14:21 mit dem Stand `b6b1119` wiederholt: `PASS`, dieselben Abweichungen gegen aarch64, `test_pack.py` und `test_sparse.py` «OK».
 
-Am 21.11. um 15:50 mit dem Stand `8cb5eff` (Runde 9, Image `differometor-bench:x86-9`): Original-Fixture `PASS` (Fehler 5,374e-06), Homodyne-Variante des Fixtures `PASS` (8,3e-08 gegen die Referenz aus dem Original-Code), Zufalls-UIFO Seed 0 mit Homodyne `PASS` (7,4e-11), leicht verändertes Fixture `PASS` (8,5e-10), `test_variants.py --quick` «OK» (`|dln s|` 4,2e-11).
+Am 21.11. um 15:12 mit dem Stand `8cb5eff` (Runde 9, Image `differometor-bench:x86-9`): Original-Fixture `PASS` (Fehler 5,374e-06), Homodyne-Variante des Fixtures `PASS` (8,3e-08 gegen die Referenz aus dem Original-Code), Zufalls-UIFO Seed 0 mit Homodyne `PASS` (7,4e-11), leicht verändertes Fixture `PASS` (8,5e-10), `test_variants.py --quick` «OK» (`|dln s|` 4,2e-11).
+
+Am 21.11. um 15:23 mit dem Stand der Runde 10 (Image `differometor-bench:x86-10`): Original-Fixture `PASS` (5,374e-06), Homodyne-Variante `PASS` (8,3e-08), Zufalls-UIFO Seed 0 mit Homodyne `PASS` (7,4e-11), `test_adjoint.py` WORST 1,8e-07 mit Abweichung 0 zwischen den Blockgrössen. Die warmen Läufe sind auch dort kürzer geworden (Fixture 50,2 → 46,3 ms, Homodyne 54,1 → 46,9 ms).
 
 Die Zeiten aus der Emulation sagen nichts aus (Erstlauf 2,2 s, davon 0,77 s Sensitivity-Kompilation). Rosetta bietet auch nicht denselben Befehlssatz wie ein Xeon (kein AVX-512). Auf echter Hardware können darum andere Rechenkerne von OpenBLAS und XLA laufen. Zu erwarten sind Unterschiede auf Rundungsniveau, bei einer Toleranz von 1e-5 und einem Abstand von 4,6e-6.
 
@@ -423,7 +448,7 @@ python runs/noel/test_build.py . --compare alt.npz neu.npz   # 946 arrays compar
 python benchmark.py --repeats 3 --output orig.json --save-arrays orig.npz
 ```
 
-Sollwerte (Stand `b6b1119`, auf Noels M4, unverändert seit Runde 2):
+Sollwerte (Stand Runde 10, auf Noels M4, unverändert seit Runde 2):
 
 | Grösse | Abweichung gegen das Original-JAX (max, relativ zum Maximum) |
 | --- | ---: |
@@ -437,7 +462,7 @@ Sollwerte (Stand `b6b1119`, auf Noels M4, unverändert seit Runde 2):
 
 | Prüfung | Sollwert |
 | --- | --- |
-| `check_setups.py` | Seit Runde 9 alle vier Setups über den schnellen Weg: aLIGO höchstens 1,1e-8, aLIGO verknüpft 1,8e-8 (Sensitivity) und 1,6e-9 (Gradient), Voyager 1,7e-9 (Signal), 7,3e-13 (Sensitivity), 1,1e-10 (Gradient) |
+| `check_setups.py` | Seit Runde 9 alle vier Setups über den schnellen Weg: aLIGO höchstens 1,1e-8, aLIGO verknüpft 1,8e-8 (Sensitivity) und 1,6e-9 (Gradient), Voyager 1,7e-9 (Signal), 7,3e-13 (Sensitivity), 1,1e-10 (Gradient). Alle ohne zweite Zerlegung im Rückwärtslauf |
 | `test_detectors.py` | WORST 2,9e-14 |
 | `test_adjoint.py` | WORST 4,0e-08, Blockgrössen 1 und 2 gegen 16: Abweichung 0. Die Prüfung der Residuen-Grenze läuft nur noch bei Ständen vor Runde 6 |
 | `test_perturbed.py` | WORST 2,1e-08 |
@@ -471,7 +496,7 @@ Sollwerte (Stand `b6b1119`, auf Noels M4, unverändert seit Runde 2):
 | 4b | Speicherbereinigung von Python vor `import jax` abschalten | gemessen: rund 20 ms (478 bis 491 statt 500 bis 511 ms) | Geht nur ausserhalb von `differometor/` (Startskript, Umgebung oder `benchmark.py`). Das ist Feyers Entscheid, nicht unserer |
 | 4c | Zwischenergebnisse des Forward-Laufs im Prozess behalten statt als Residuen durch JAX zu schicken (LU-Faktoren, Pläne) | geschätzt 3 ms in Docker, nicht gemessen | Widerspricht der Abmachung «keine Caches». Bräuchte Noels Ja und einen zustandslosen Rückfall |
 | 5 | `noel` auf Joels x86-Maschine messen (AMD EPYC, `taskset -c 14 python benchmark.py --cpus 1`), im Wechsel mit `6b67cfd` (Stand vor Runde 5). Die Bündelung aus Runde 5 lässt sich nach Runde 6 nicht mehr einzeln zurücknehmen. Sie ist jetzt Teil des Entwurfs, und ihr Nachteil im Warmlauf ist weg | – | Joel fragen |
-| 7 | Detektor-Basis `Z` weglassen: Ist der Kotangent des Signals bei jeder Frequenz ein Vielfaches von `conj(w)` (das ist beim Benchmark-Readout so, auch mit Homodyne bei Phase 180°), dann ist die Signal-Adjungierte `alpha * conj(Y)`, und der Vorwärtslauf löst nur noch eine rechte Seite statt zwei oder vier. Philip hat das in seinem Stand (seine Nr. 14) | geschätzt 2 bis 3 ms im Forward für Detektor-Setups, 4 bis 5 ms für Homodyne, dazu 2,4 bzw. 4,9 MB weniger Residuen | Jeder andere Kotangent braucht dann eine zweite Zerlegung im Rückwärtslauf (gibt es schon: `general_adjoint`). Ändert die Zahlen des Fixtures auf Rundungsniveau |
+| 8 | Vorab-Elimination der einfachen Unbekannten nach Philips Muster (`_CondensedLU`: 751 → 200 Unbekannte in drei Stufen). In Runde 8 auf dem Mac verworfen (2,4 ms langsamer). Auf x86 ist SuperLU laut Philip 3,5-mal langsamer als auf dem M4, mit rund 0,5 µs festem Aufwand pro Spalte, und dort hat es bei ihm den Vorwärtslauf von 105,8 auf 82,1 ms gebracht | unbekannt für unseren Stand (balancierte Zerlegung mit 6'100 Faktoreinträgen). Philips Stand ohne eigene C-Zerlegung liegt auf dem Xeon im Forward bei 57 ms, `noel` bei 63 ms | Lässt sich nur auf x86 beurteilen. Auf dem Mac und in Docker (aarch64) sieht man den Effekt nicht |
 | 6 | Falls ohne `__pycache__` gewertet wird (Frage B4): Code, den der Benchmark nie ausführt, in Module auslagern, die erst bei Bedarf geladen werden (Teile von `build.py` und `components.py`) | unbekannt, höchstens einige der 13 ms | Mit `__pycache__` bringt es nichts. Erst nach Feyers Antwort |
 
 ## Stand der anderen Branches
@@ -480,11 +505,11 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 
 | Branch | Zuletzt gesehen | Stand in `noel` |
 | --- | --- | --- |
-| `origin/philip` | `5934330` (21.11. 15:05), neu seit `ab82e42`: `b3676de`, `5934330` | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
-| `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
+| `origin/philip` | `5934330` (21.11. 15:05), unverändert am 21.11. 15:14. Neu seit `ab82e42`: `b3676de`, `5934330` | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
+| `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), unverändert am 21.11. 15:14. Neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), am 21.11. 15:06 auf dem Server gelöscht (der Commit steckt in `origin/max/lu-once`) | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
-| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 15:06, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
-| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 15:06 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
+| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 15:14, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
+| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 15:14 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `5eece1d` | unverändertes Kit |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
@@ -529,5 +554,5 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - Verworfene Versuche werden nicht committet.
 - Eine Änderung bleibt nur, wenn sie im Wechselvergleich schneller ist und alle Prüfungen unverändert gut ausfallen.
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.
-- Discord (Noel am 21.11. um 14:25): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:40: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
+- Discord (Noel am 21.11. gegen 14:35): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:13: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
 - Seit Runde 9 (21.11.) deckt der schnelle Weg Balanced-Homodyne-Detektoren und Verknüpfungen mit `jnp.sqrt` ab. Auftrag: Feyers Zusatz zu den Setup-Varianten, von Noel weitergegeben.
