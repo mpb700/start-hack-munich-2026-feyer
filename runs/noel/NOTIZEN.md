@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 21:18, nach Runde 15. **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 21:29, nach Runde 16. **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -97,17 +97,30 @@ Noel um 21:02 auf die Frage, ob die Schleife Patches für Philips Stand bauen so
 
 **So läuft eine Runde:** `git fetch`, dann Philips neue Commits und seine `runs/philip/NOTIZEN.md` lesen (was ist offen, was baut er gerade). Arbeitskopie des neuesten `origin/philip-fastest` als `git worktree` im Scratchpad (zweimal: unverändert und geändert), Wechselvergleich mit `runs/noel/ab.py` und in Docker mit `runs/noel/ab_docker.py` (Images aus beiden Kopien), Prüfungen: `benchmark.py` `PASS` und Arrays bitgleich, alle `runs/philip/test_*.py` und `runs/flags/test_tuning.py` mit `PYTHONPATH=.`, `runs/check_setups.py`, `runs/noel/test_variants.py <kopie>` (dort sind die zwei Varianten mit Amplitudenmodulation erwartungsgemäss über JAX), `runs/noel/variant_run.py` auf Homodyne-Varianten. Den mitgelieferten Bytecode der geänderten Module neu erzeugen. Dann `git format-patch -1 --binary` nach `runs/noel/patches/`. `main`, `philip-fastest` und alle anderen Branches bleiben unberührt.
 
-**Patches (anwenden auf `philip-fastest`, in dieser Reihenfolge prüfen, ob die Basis noch passt):**
+**Patches** (Basis `8e7c4f1`, das ist seit 21:18 sowohl `philip-fastest` als auch `main`). Beide lassen sich einzeln oder zusammen anwenden, sie berühren verschiedene Dateien. Geprüft: beide nacheinander auf `8e7c4f1`, danach `PASS` auf Fixture und Homodyne-Variante.
 
-| Patch | Basis | Inhalt | Gemessen | Stand |
-| --- | --- | --- | --- | --- |
-| [`patches/philip-fastest-build.patch`](patches/philip-fastest-build.patch) | `8e7c4f1` | Build-Schritt: gemeinsam genutzte konstante Index-Arrays, Funktionseingaben ohne Auffüllen, kein `np.tile` bei einem Signal pro Raum, kurzer Weg in der Seitenband-Erweiterung | `run_build_step` auf dem M4 3,97 → 3,38 ms (erster Aufruf 4,66 → 4,12 ms). Build-Phase von `benchmark.py`, 14 Läufe im Wechsel: Mac 10,9 → 10,5 ms, Docker `--cpus 1` 9,9 → 9,3 ms. Auf dem Xeon nicht gemessen, dort kostet der Build rund 17 ms, zu erwarten sind 1,5 bis 2,5 ms | offen, wartet auf Philip |
-| [`patches/main-homodyne.patch`](patches/main-homodyne.patch) | `50341f9` (`main`) | Balanced Homodyne und `sqrt`-Verknüpfungen im schnellen Weg | siehe Runde 12 | nur noch für `main` sinnvoll, auf `philip-fastest` durch Philips `708803d` überholt |
+| Patch | Inhalt | Gemessen (M4, Median) | Stand |
+| --- | --- | --- | --- |
+| [`patches/philip-fastest-build.patch`](patches/philip-fastest-build.patch) | Build-Schritt (`build.py`): gemeinsam genutzte konstante Index-Arrays, Funktionseingaben ohne Auffüllen, kein `np.tile` bei einem Signal pro Raum, kurzer Weg in der Seitenband-Erweiterung | `run_build_step` 3,97 → 3,38 ms (erster Aufruf 4,66 → 4,12 ms). Build-Phase von `benchmark.py`, 14 Läufe im Wechsel: Mac 10,9 → 10,5 ms, Docker `--cpus 1` 9,9 → 9,3 ms | offen, wartet auf Philip |
+| [`patches/philip-fastest-forward.patch`](patches/philip-fastest-forward.patch) | Vorwärtslauf (`fast.py`): Dual-Zahlen ohne Null-Terme, Rausch-Summen direkt in die rechte Seite | Einträge mit Ableitungen 2,33 → 1,96 ms, Vorwärts-Callback 17,3 → 16,8 ms. Forward-Phase von `benchmark.py`: Mac 22,0 → 21,1 ms (14 Läufe), Docker `--cpus 1` 27,5 → 26,3 ms (16 Läufe), dort Gradient-Phase 5,4 → 5,7 ms | offen, wartet auf Philip |
+
+Auf dem Xeon ist nichts davon gemessen. Zu erwarten sind beim Build 1,5 bis 2,5 ms (er kostet dort rund 17 ms) und beim Vorwärtslauf 1,5 bis 3 ms (Einträge mit Ableitungen kosten dort 10 ms, die Rausch-Summen 2,1 ms).
 
 ```bash
 git fetch origin && git checkout philip-fastest
 git show origin/noel:runs/noel/patches/philip-fastest-build.patch | git am
+git show origin/noel:runs/noel/patches/philip-fastest-forward.patch | git am
 ```
+
+Der frühere `patches/main-homodyne.patch` ist gelöscht: `main` steht seit 21:18 auf `8e7c4f1` und hat damit Philips eigenen Homodyne-Umbau (`708803d`). Der Patch liegt noch im Verlauf (`b3030c4`).
+
+Zum Vorwärts-Patch (Runde 16, 21:18 bis 21:29):
+
+- **Dual-Zahlen.** Die meisten Rechenschritte in den Bauteil-Formeln verknüpfen eine Dual-Zahl mit einer gewöhnlichen Zahl oder einem gewöhnlichen Array (ein Parameter, der keine Designvariable ist, eine Konstante). Bisher wurde daraus eine Dual-Zahl mit Ableitung 0 gemacht, und Produkt- und Summenregel haben ein Null-Array ausgerechnet und addiert. Jetzt braucht das Produkt einen Term und die Summe lässt die Ableitung stehen. Die Werte sind dieselben, nur das Vorzeichen einer Null kann sich unterscheiden. Dieselbe Klasse steckt in `noel` (dort im Rückwärts-Callback).
+- **Rausch-Summen.** `N y` und `N^H y` haben wenige Einträge. Sie gehen direkt in die zweite rechte Seite, und die Rauschleistung `y^H N y` wird über die Rausch-Einträge summiert statt über alle Unbekannten. Zwei Felder (F, m), ihre Summe und eine konjugierte Kopie von `Y` entfallen. Die rechte Seite ist bitgleich, die Leistung wird in anderer Reihenfolge summiert.
+- **Zahlen:** Carrier, Signal und Powers des Benchmarks bitgleich, Noise 6,3e-16, Sensitivity 4,1e-16, Gradient 1,6e-14 (relativ zum Maximum), Fehler gegen die Referenz unverändert 5,3742808816537035e-06. Alle elf Skripte unter `runs/philip` und `runs/flags` laufen durch, `test_variants.py` wie vorher (WORST 4,95e-07 und 2,41e-08), `variant_run.py` `PASS`. Im emulierten x86-64-Image mit der C-Zerlegung: Fixture und fünf Varianten `PASS`.
+- **Gradient-Phase in Docker** in zwei Messreihen 0,2 bis 0,3 ms langsamer (5,4 → 5,7 ms), auf dem Mac gleich (3,5 ms). Der Rückwärts-Callback selbst ist gleich schnell (1,68 ms). Vermutung, nicht bewiesen: Der Vorwärtslauf gibt weniger Speicher frei, den der Rückwärtslauf im ersten Aufruf sonst wiederverwendet hätte. Netto bleiben in Docker rund 0,9 ms.
+- Die nicht mehr benutzte Hilfsfunktion `_scatter_sum` ist entfernt. Der Patch enthält den neu erzeugten Bytecode von `fast.py`.
 
 Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 
@@ -116,7 +129,7 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
 
-**Weitere Hebel für Philips Linie** stehen in der Tabelle von Runde 14 (Frequenzblöcke im Vorwärtslauf, Rausch-Summen ohne Zwischenfelder, Imports).
+**Weitere Hebel für Philips Linie:** Frequenzblöcke im Vorwärtslauf (3 bis 8 ms auf dem Xeon, braucht eine Trennung von Analyse und Numerik in `pattern_lu.c`), `signal` und `MU` ohne Umkopieren aus `solutions` (rund 0,5 ms), ein Umbau des Builds pro Bauteil-Art (geschätzt weitere 20 bis 30 % des Builds, gross), Imports (Philips Gebiet). Die Rausch-Summen aus der Tabelle von Runde 14 sind mit dem Vorwärts-Patch erledigt.
 
 ## Runde 14 (21.11., 20:55 bis 21:00): Schleife alle 30 Minuten, Blick in Philips Stand
 
@@ -665,8 +678,8 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), am 21.11. 15:06 auf dem Server gelöscht (der Commit steckt in `origin/max/lu-once`) | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
 | `origin/Joel` | `9f79a5f` (21.11. 17:53), neu seit `76e799f`: nur das README (Verweis auf das neue Tag `joels-fastest` = `ac7aedc`). Baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
 | `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 18:36 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
-| `origin/main` | `50341f9` (21.11. 17:30). Bis dahin das unveränderte Kit `5eece1d`, seither Philips Linie `philip-nacht` mit `noel` bis `cb902d7` (Runde 7) | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Für `main` gibt es den Patch aus Runde 12. Das unveränderte Kit ist weiter `5eece1d` |
-| `origin/philip-fastest` | `8e7c4f1` (21.11. 20:37, seit `11e96b4` nur ein Testskript). `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
+| `origin/main` | `8e7c4f1` (seit 21.11. 21:18 gleich `philip-fastest`, also mit Balanced Homodyne). Vorher `50341f9` (17:30), davor das unveränderte Kit `5eece1d` | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Das unveränderte Kit ist weiter `5eece1d` |
+| `origin/philip-fastest` | `8e7c4f1` (21.11. 20:37, seit `11e96b4` nur ein Testskript), unverändert am 21.11. 21:28. `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
 
