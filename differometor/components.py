@@ -34,6 +34,7 @@ to match phase conventions and signs.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -806,6 +807,34 @@ def amplitude_detector(solution: jnp.ndarray) -> jnp.ndarray:
     return jnp.sqrt(0.5 * EPSILON_0C) * jnp.abs(solution)
 
 
+def _power_detector_numpy(solution):
+    """Host (NumPy) implementation of `power_detector`."""
+    solution = np.asarray(solution)
+    return np.ascontiguousarray(0.5 * EPSILON_0C * np.abs(solution) ** 2)
+
+
+def _power_detector_backward_numpy(solution, cotangent):
+    """Host pullback of ``0.5 * EPSILON_0C * |solution|^2`` (JAX cotangent convention)."""
+    solution = np.asarray(solution)
+    cotangent = np.asarray(cotangent)
+    bar = EPSILON_0C * np.conj(solution) * cotangent
+    if not np.iscomplexobj(solution):
+        bar = np.real(bar)
+    return np.ascontiguousarray(bar.astype(solution.dtype))
+
+
+def _power_detector_dtype(dtype):
+    dtype = np.dtype(dtype)
+    return np.dtype("float64") if dtype == np.dtype("complex128") else (
+        np.dtype("float32") if dtype == np.dtype("complex64") else dtype
+    )
+
+
+def _is_tracer(value) -> bool:
+    return isinstance(value, jax.core.Tracer)
+
+
+@jax.custom_vjp
 def power_detector(solution: jnp.ndarray) -> jnp.ndarray:
     """
     Convert complex field amplitude to optical power.
@@ -824,10 +853,73 @@ def power_detector(solution: jnp.ndarray) -> jnp.ndarray:
     -----
     Uses the scaling:
         0.5 * EPSILON_0C * |field|^2
+
+    Compiled graphs keep this readout behind a host callback with a hand-written
+    pullback (see `_power_detector_backward_numpy`): the readout only needs the
+    carrier/signal/quantum-noise outputs, so keeping it opaque keeps XLA from
+    inlining hundreds of elementwise ops into the sensitivity and gradient
+    programs.
     """
+    if _is_tracer(solution):
+        return jax.pure_callback(
+            _power_detector_numpy,
+            jax.ShapeDtypeStruct(solution.shape, _power_detector_dtype(solution.dtype)),
+            solution,
+        )
     return 0.5 * EPSILON_0C * jnp.abs(solution) ** 2
 
 
+def _power_detector_fwd(solution):
+    return power_detector(solution), (solution,)
+
+
+def _power_detector_bwd(residuals, cotangent):
+    (solution,) = residuals
+    value_bar = jax.pure_callback(
+        _power_detector_backward_numpy,
+        jax.ShapeDtypeStruct(solution.shape, solution.dtype),
+        solution,
+        cotangent,
+    )
+    return (value_bar,)
+
+
+power_detector.defvjp(_power_detector_fwd, _power_detector_bwd)
+
+
+def _signal_detector_numpy(carrier, signal):
+    """Host (NumPy) implementation of `signal_detector`."""
+    carrier = np.asarray(carrier)
+    signal = np.asarray(signal)
+    n = carrier.shape[0]
+    upper = np.conj(carrier) * signal[:n]
+    lower = carrier * signal[n : 2 * n]
+    return np.ascontiguousarray(upper + lower)
+
+
+def _signal_detector_backward_numpy(carrier, signal, cotangent):
+    """Host pullback of `signal_detector` (JAX cotangent convention)."""
+    carrier = np.asarray(carrier)
+    signal = np.asarray(signal)
+    cotangent = np.asarray(cotangent)
+    n = carrier.shape[0]
+    upper = signal[:n]
+    lower = signal[n : 2 * n]
+
+    carrier_bar = np.conj(cotangent) * np.conj(upper) + cotangent * lower
+    while carrier_bar.ndim > carrier.ndim:
+        carrier_bar = carrier_bar.sum(axis=-1)
+    for axis, size in enumerate(carrier.shape):
+        if size == 1 and carrier_bar.shape[axis] != 1:
+            carrier_bar = carrier_bar.sum(axis=axis, keepdims=True)
+
+    signal_bar = np.zeros(signal.shape, dtype=signal.dtype)
+    signal_bar[:n] = np.broadcast_to(cotangent * np.conj(carrier), signal_bar[:n].shape)
+    signal_bar[n : 2 * n] = np.broadcast_to(cotangent * carrier, signal_bar[n : 2 * n].shape)
+    return np.ascontiguousarray(carrier_bar.astype(carrier.dtype)), np.ascontiguousarray(signal_bar)
+
+
+@jax.custom_vjp
 def signal_detector(carrier: jnp.ndarray, signal: jnp.ndarray) -> jnp.ndarray:
     """
     Demodulate optical power for a single-frequency signal step.
@@ -851,9 +943,41 @@ def signal_detector(carrier: jnp.ndarray, signal: jnp.ndarray) -> jnp.ndarray:
     Matches:
     finesse > detectors > compute > power.pyx > c_pd1_AC_output
     """
+    if _is_tracer(carrier) or _is_tracer(signal):
+        result_dtype = jnp.result_type(carrier.dtype, signal.dtype)
+        return jax.pure_callback(
+            _signal_detector_numpy,
+            jax.ShapeDtypeStruct(
+                (carrier.shape[0],) + signal.shape[1:], result_dtype
+            ),
+            carrier,
+            signal,
+        )
     upper_sideband = jnp.conj(carrier) * signal[: carrier.shape[0]]
     lower_sideband = carrier * signal[carrier.shape[0] : carrier.shape[0] * 2]
     return upper_sideband + lower_sideband
+
+
+def _signal_detector_fwd(carrier, signal):
+    return signal_detector(carrier, signal), (carrier, signal)
+
+
+def _signal_detector_bwd(residuals, cotangent):
+    carrier, signal = residuals
+    carrier_bar, signal_bar = jax.pure_callback(
+        _signal_detector_backward_numpy,
+        (
+            jax.ShapeDtypeStruct(carrier.shape, carrier.dtype),
+            jax.ShapeDtypeStruct(signal.shape, signal.dtype),
+        ),
+        carrier,
+        signal,
+        cotangent,
+    )
+    return carrier_bar, signal_bar
+
+
+signal_detector.defvjp(_signal_detector_fwd, _signal_detector_bwd)
 
 
 # -----------------------------------------------------------------------------
