@@ -101,3 +101,30 @@ Die A-Werte drifteten im Fenster von 0,7725 → 0,9937 s (Systemlast durch ander
 stieg auf >12), 1 Kaltpaar hatte einen Ausreißer. Die Paare selbst zeigen den erwarteten Effekt
 (9 von 10 warmen Paaren: B −0,03…−0,13 s). **Sauberer A/B-Rerun bei 00 angefragt** (Fenster);
 die Nachweise (a)–(d) sind davon unabhängig bereits vollständig grün.
+
+## FINALES sauberes Rerun (Fenster 03:58:00–04:03:00 UTC, Kern 14 exklusiv, strikte Ruhe)
+
+A = `ac7aedc` (`/root/wt-10-ms-imports`), B = SX2-env (`396df84`, Code `275a8ee`), 10 warme +
+4 kalte Paare, `--cpus 1 --repeats 10`, `env -u XLA_FLAGS`, frische Prozesse.
+Idle-Check vor/nach: **kein fremder benchmark/quick_probe**. Lauf: 03:58:43–04:00:25.
+
+| A/B | A median | σ_A | B median | σ_B | Δ (B−A) | pooled σ | Urteil |
+|---|---:|---:|---:|---:|---:|---:|---|
+| **warm, 10 Paare** | 0,7813 s | 0,0044 | **0,6993 s** | 0,0075 | **−0,0820 s (−10,50 %)** | 0,00611 | **GAIN** |
+| **kalt, 4 Paare** | 1,0117 s | 0,0008 | **0,9263 s** | 0,0054 | **−0,0855 s (−8,45 %)** | 0,00384 | **GAIN** |
+
+**Alle 10 warmen Paare negativ** (−0,0749…−0,0903 s); alle 4 kalten Paare negativ (−0,0802…−0,0929 s).
+Compile-Effekt (Median): `sensitivity_compile` 0,1417 → **0,0843 s (−0,0574)**;
+`gradient_compile` 0,0721 → **0,0487 s (−0,0234)**; `imports` 0,2889 → 0,2881 (neutral).
+`environment.xla_flags`: exakt `--xla_backend_optimization_level=0 --xla_llvm_disable_expensive_passes=true` ✓.
+
+**Arrays:** gegen `ac7aedc` carrier/signal/noise/powers/parameters/frequencies bitgleich,
+sensitivity 9,2e-41, gradient 1,31e-10 (letzte Bits); **gegen offizielle SX2-Outputs
+(`S-sx2-cold.npz`) alle Felder bitgleich inkl. gradient = 0,0** ✓ (SX2-env ≡ SX2).
+
+**Gate (B):** Δerr = 0 (≤1e-8), Doppellauf **bit-identisch**, gradient rel_L2 = 1,21e-15 (≤1e-5),
+finite/sens/FD **PASS**; Gate-e2e warm 0,7085/0,7060 s, kalt 0,9205 s → **GATE PASS**.
+
+**Fazit:** SX2-env reproduziert SX2 exakt (Arrays bitgleich, Zeiten 0,6993/0,9263 vs
+0,681–0,691/0,920) und ist die **transparente, report-sichtbare Feyer-Variante**:
+**−10,5 % warm / −8,5 % kalt**, bitgleich zu SX2, Gate PASS.
