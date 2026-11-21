@@ -112,6 +112,8 @@ In Runde 8 gemessen und nicht übernommen:
 | `test_detectors.py`, `test_adjoint.py`, `test_perturbed.py` | WORST 2,2e-15, 1,8e-07 (Blockgrössen: Abweichung 0), 3,9e-08 |
 | `test_pack.py`, `test_sparse.py`, `test_build.py` | alle «OK» |
 
+Am 21.11. um 14:21 mit dem Stand `b6b1119` wiederholt: `PASS`, dieselben Abweichungen gegen aarch64, `test_pack.py` und `test_sparse.py` «OK».
+
 Die Zeiten aus der Emulation sagen nichts aus (Erstlauf 2,2 s, davon 0,77 s Sensitivity-Kompilation). Rosetta bietet auch nicht denselben Befehlssatz wie ein Xeon (kein AVX-512). Auf echter Hardware können darum andere Rechenkerne von OpenBLAS und XLA laufen. Zu erwarten sind Unterschiede auf Rundungsniveau, bei einer Toleranz von 1e-5 und einem Abstand von 4,6e-6.
 
 ```bash
