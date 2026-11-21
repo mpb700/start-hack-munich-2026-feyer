@@ -82,6 +82,36 @@ Runde 10 gegen Runde 9 (`8a4d2fe` → Runde 10), je 12 Läufe im Wechsel, Median
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
 
+## Skalierung mit der Gittergrösse (21.11., 15:35, auf Noels Frage)
+
+`uifo(size)` baut dasselbe Modell wie das Fixture als N×N-Gitter. Gemessen mit `runs/noel/scaling.py` auf dem Mac (Akku), Zufalls-Setup mit einfachem Detektor und Zufallswerten, `jit(value_and_grad(loss))` mit dem Loss aus `benchmark.py`, 101 Frequenzen, Stand `55ecbc3`:
+
+| Gitter | Spiegel | Designvariablen | Unbekannte im Signalsystem | Warm (Forward + Gradient) | Erster Aufruf mit Kompilation | Speicher (Spitze) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2×2 | 24 | 103 | 373 | 13,8 ms | 46 ms | 0,20 GB |
+| 3×3 (wie das Fixture) | 48 | 190 | 749 | 27,9 ms | 62 ms | 0,22 GB |
+| 4×4 | 80 | 304 | 1'247 | 45,6 ms | 81 ms | 0,25 GB |
+| 5×5 | 120 | 459 | 1'883 | 72,6 ms | 109 ms | 0,30 GB |
+| 6×6 | 168 | 619 | 2'629 | 106,6 ms | 146 ms | 0,37 GB |
+| 8×8 | 288 | 1'055 | 4'525 | 212,9 ms | 254 ms | 0,48 GB |
+
+Die Zeit wächst etwa linear mit der Zahl der Unbekannten (Exponent rund 1,1). Der unveränderte Original-Code (`5eece1d`) im selben Skript, wegen des Speichers mit 21 statt 101 Frequenzen (er rechnet auf dem Mac mit mehreren Kernen, unser Weg mit einem):
+
+| Gitter | Original warm | `noel` warm | Faktor | Original: Speicher | `noel`: Speicher |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2×2 | 111,8 ms | 5,5 ms | 20 | 0,82 GB | 0,18 GB |
+| 3×3 | 554,2 ms | 9,0 ms | 62 | 1,73 GB | 0,19 GB |
+| 4×4 | 2'026,6 ms | 14,1 ms | 144 | 3,82 GB | 0,20 GB |
+
+Das Original wächst mit einem Exponenten von rund 2,5 in der Zeit und 2 im Speicher. Hochgerechnet aus den 14,4 GiB, die das README für 3×3 mit 101 Frequenzen nennt, bräuchte ein 4×4-Gitter rund 40 GiB (nicht gemessen). Auf der Referenzmaschine mit 32 GB liefe es also nicht.
+
+Einordnung:
+
+- Für die Rangliste zählt das nicht direkt: Gewertet wird ein ähnliches Setup, und bei 3×3 sind rund 420 von 445 ms fixe Kosten (Imports, Kompilation).
+- Für die Robustheit ist es abgedeckt: `test_variants.py` vergleicht 1×1 bis 4×4 mit dem Original-JAX. Für 5×5 bis 8×8 ist hier nur geprüft, dass Loss und Gradient endlich sind.
+- Für den Pitch ist es ein Argument: Der Ansatz skaliert, das Original nicht.
+- Ab Grösse 10 sind die Setups des Generators unbrauchbar: Er setzt die Knotennamen aus den Ziffern der Gitterposition zusammen (`m110` steht für zwei verschiedene Spiegel).
+
 ## Was in Runde 10 geändert wurde
 
 | Nr. | Änderung | Datei | Gewinn im Wechselvergleich |
