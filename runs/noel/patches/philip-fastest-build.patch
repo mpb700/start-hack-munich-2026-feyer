@@ -1,0 +1,584 @@
+From d7fc36115cd0148a6b906fcd8d3f0673c2ea822d Mon Sep 17 00:00:00 2001
+From: Noel Blatter <noel.blatter@gmail.com>
+Date: Sat, 21 Nov 2026 21:17:19 +0100
+Subject: [PATCH] Build step: shared constant index arrays, cheaper sideband
+ layout
+
+run_build_step creates several thousand tiny index arrays per setup, and
+creating one costs more than everything that happens to it afterwards.
+
+- Output selections and empty function inputs that are the same for every
+  component of a kind are shared read-only arrays (never positions in a
+  system matrix, which the sideband layout shifts in place).
+- Function inputs come with their seven columns from the call sites, so
+  set_instructions no longer pads them.
+- One signal per space, the usual case, needs no np.tile and np.repeat.
+- The sideband layout has a short path for instruction sets that lie
+  entirely in the carrier block (surfaces, noise sources).
+- np.array instead of np.full for the constant output rows.
+
+All arrays of run_build_step are identical for 27 setups (946 arrays,
+runs/noel/test_build.py --dump / --compare), the benchmark arrays are
+bit-identical, all scripts under runs/philip and runs/flags pass.
+
+Apple M4: run_build_step 3.97 -> 3.38 ms warm, 4.66 -> 4.12 ms on the
+first call. Build phase of benchmark.py, 14 alternating runs, median:
+10.9 -> 10.5 ms (macOS), 9.9 -> 9.3 ms (Docker, Linux aarch64, one CPU).
+Not measured on the Xeon. Shipped bytecode of build.py regenerated.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../__pycache__/build.cpython-312.pyc         | Bin 60331 -> 62580 bytes
+ differometor/build.py                         | 144 ++++++++++++------
+ 2 files changed, 98 insertions(+), 46 deletions(-)
+
+diff --git a/differometor/__pycache__/build.cpython-312.pyc b/differometor/__pycache__/build.cpython-312.pyc
+index 13ec2d2541f25dfd0962d063181cdea48974d276..886d9c99a15c7bb611675412c05bcf69fe770fbf 100644
+GIT binary patch
+delta 13170
+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
+S@U}Lup-A=)v#Oy?_WuBm7!xx9
+
+delta 10437
+zcmd5iX>=6lk=;F~W=6+In$b0*6CI;l2qAGJP9e~VKo>$9sil#G(9ttOV7~EyV>`B^
+z*x)Z4+Z&vKodhsAU{CS_zLgNiu^sQo12LX}&Av_Y7JE0y#(BF**6(dq_gn~!v;VgB
+zrn<hW`l{-y`tH^j|1LZAfh^{o$ViQhVVHG)DvW#cjVi<87$f)J+~K@g#UftSFQ=vQ
+z`1ApeSKqJbDD02uC<3Ay$`SX=JBn>gM@a<3YiOw~fz=|k==w|f$o?{rDjU%7Q6RN2
+zf(iWb6?}AmIUm!%h}VmCVnrAy!gz!VLw^Ntq%m?cn;^nO5hfvYC4+A69u>pzDxMoi
+z=2O6@#k>h>nBkWSzcl!z!w>m7J_D>*@|pcg@HY$aD)fV2%r5{Rvf-Blzg&>cgP#R{
+zlJ5KfHW0-ZfQ2P|;r&d<Qod+4U(6T5ujGilV;Lx7`BJ{@2nX*Xej(uHN91>;q5SfF
+zoTbv8s?ciO59;5QsjjmS^6MOJH@wW2(^o%Dq(w%9Vhs?x+#8LhEW3>EO~~d1IsHMx
+z2G=^~F=ZcTWBRx*XuVTOl!V*GG0b6ZIzrAkRX|aIj5<t4P1Lu@L^#zBOtbiqh*M}E
+z9=nOKBm(Mc{B;$eUqduH)UA?(MW<$O9k-WD0%5}46Ui`rvOaD(l)}`h!qhQDb$502
+zcyg;2%t((zMI%yDTw0=qS~|ZIG2n!bsE7`&+S%y{5+UINI~`4Q;99Kcn(hv@{E}iV
+zzlQm>?g6d0)^vT9K~QsxL9FVGBytiN=5Bm=Z9xrO(QybDNRP?`WpLXlxh-mmB8s4v
+z228D_CeTtfuy0l4FV9mGZDX7<M7ECU>Hs(NM1OES(bEZ&Sr+Svpa)}3#UwUpC(wg*
+zKogaNGU!2&WgYrN^us#ZkYtjBo*1g%6(39Vfz-0h^bR>AsZ^3E!ib_~R<xlc(S()i
+z4w9Gw*;Y`=qFUut08<As%^fgZkoFH_?v&J*<Sw;O=@=UsvO9b->&S>tAy`Lk{XW@9
+z|EQ1;E%GU>f?(Yz<RY%Lj*s_`@|HMZEfj@y2$msOk6;CYl>mG)VQk75IW*ecJ2KX{
+zs~bvopR#XkWODbYFD6J93Gz|9u!_>GV!AvlMI#hIb$c8D${voRM}10qEh|>r284si
+znc(P`S()6z#cpkO2FDiBs@!7hPT>4VSEG{uTvwx$&lof{dgaV=O^s3cORc6RMgB{p
+z0-;HcFh^69uKZ=00%4^b;02kcCR=$SN`Ww5jxaN+CSUn0MN&<P^351s%_8@u+|P8X
+z>o9XLLMi?2q9-k#i0(kpg#bMex)Jmsup;P1&_^GwNUE&`)F<y78{a2jODs`BJ2IiW
+zF~UEr359w3Sw)Lt6wsf!YZt$)W=pAZ)oOMN-MA`8iB>ESuZnn1u+xWEEmrIY%3^w9
+z)lF`02|d61FYLYUGu6L}NEv3B9WePhGo5B)<`p<c@C$e4fq~!9$2Pyl**N-HqlIMw
+z=Fx9$S*tAr3Go?TNZF-v>>}DUno6~G(FqqK7$O5DX{ZE$&e90RvDjT!r(oG7^t1JG
+zw6=blT}mgmWzoOY$NI6-hCJ<bpxW>XQLd(0$4b~>^BV0c$sl;<qW{+L-mN~}Xso==
+zr`6z-g{rq^z#3vh*8>f>(U?zfG)CT1p{yx~YMaxvF?aFdFOtnXrH$bmpJC|>TMOvX
+zt=n(WgTYwm4@LyrL|3$I(l-Y~Q6+|ED}AEnS%15CZj&NV;V-|vEm6c4P}TOdxE3)7
+zOQBY#7|NxNjr7&+3AAy$lC2SA^ylq5)l#yQEE|@}hqf28n?c4L<j4B4L)()hw(Vi;
+z+#%(34y|mh)E<E;OVm3o<z>3n=+Dq2gHg&lG2XPaEt@{p8Ns&GzqT%;q|*dgQ(Kz8
+z<7tj$evjch{qG(0U|Sm7MUS;D0r>HbRJy-CnZ~tm3YN;~`;F#Uh~3U-*uWI%Tth18
+zY-6es$lW2bIGeAPSn<H>na6?%_b$){m8=KJrrxx2Bj07?0#s4QhC}S=Z-ZSr5yN?i
+z6)xPZ;aaKT(0blV$2u)y%TqO=BnET9_tLt~3=D*!9m^p)mTYo5vpFg0w&3`K)JJDK
+z(^y^%5>HFEB>98Wx5En5K)EgusQys1!vi%CBF_($Z60eK1{Y&K7-BdvTtH3-@=%B@
+z#mlvf<dO>b3v?*#VBzIM+x67BGvT&QUk{zWfPS=7a|cd|Bc0}U7pK}_90t<kTJPFG
+zHaO-_B#jh=cO248@0K$}vktP=^)yaQ!6C2_7UvrHZ6X?}^TIOy21wL`M6EbTN?bLB
+z<<0lNhKQ74t8D%fZnc~>)Vd}iMU>=+MfuHSGrvR}Xlq=XhRryi&2NLb8PteR!2R1C
+zZ>D8dbM&}tGhgvFx>~+g*LKilVRz9^Yc5RXO+s4aMzWExVp}+}g&rO+f<b-Nn#H!E
+zx74>gl`ia!Rc+yo1KcT&x|$Zyv0jy83&sGZsW`TSW?143TcoH2+CbKlb*@d&71EMG
+zzYR2_d^q>?2))sppn!$MnTc_unSFU|orpEo=~JEAB%3$*2i4U;iX=y!^)#a`PBkiy
+z3KmC&cI;`+#)?T$q0y9j-iS>i_5MFNrikSVzKcfiC2T#NwHczjB$<FL?cy{1v($8J
+z3>_ZS1?MblBlPI;XCT{T1z8CP2l3CQB6?RHv>Z*<`PI~s6}%ai1>gbgHXhVA+f+6M
+z#4ZPC`w4Nj&&kAvgcs&VX?|az%5J@GKGBR@0`Un1c)kP`dSd5yyvMD#k!YzkmW~cD
+zf~n*DKtYlHlulC1GKaWn6C^~O<zSlUrnCO9DJh?yk~^fvpCX6<Ezn~&f2vkVsjA@l
+zc`}m$S@9jT5lCs^O|u8TDz&|kK~Z}ktN4cO`Kj~seaD;zHGFl}1Nt!c!8B!KeCg|3
+z6R{`k3GWG0|37-dvVSb@aHf~?Kq~k^MtFL4I3qf|56P$NXyh&n>!p>u{utc=J;)@^
+zlHx9omer-v+7VM)qpN{5qBds}@ncdJoz1x06Xkw5Vlr<frDUrp*Al?|a@!nr^y<j2
+zgzaQI$#pfkwhf3!V6oKVYNp-0lVGOVw|j}U4zeOn3^o~V;^=rUj>}v{6KR2cDPT$4
+zNONf2pFgbF0a%$@Q^K_1m=Ea`b%>*UuasL%Gc1>=ITCD;CTT(=Ei`4U!~(X+Hb14=
+zKPStBeP!NqW*(5nW@uKO@10?AzJ!fCy^p>#mZtayu5|RqSd!)LYa5Tf(7(2oja%4O
+zTrm=wTw$IE{3NZxwIhLke?k*|&(m^;*uT+>;oxdg1T$tRLi6JlXf0_Ctv5O;XrvXL
+zfzZXV!~Ug7BP~9b)>{`J-h2v99QfceG(Rln5sCNJful!;^h#K>z#!H4W-O61)nb!N
+zE(Co9<)=qZX(e?qN6Myu2WReyfcjwpS4R4Zpvi4>Oa`c=4eoIAPWf+lob6%qd#HXQ
+zKF7w8Jdy{CZ9t@hM3Sg`G;rz1be)G`(MdXo_lZ07rS^DM8W5xQ^rRhR2U#c%h%QG_
+z(45ZI2^-jSSRO;i6pnP^aVwE@g*HvMgh@KGL~+wE(<VoSe-->^ho)pF+38pu(7lI+
+zyPEXCLg3sH;<$F=z#iUDXOffYe>$|?-OhzBzjq`~+}ziYZrI}Qe_D>WQvuKY({;E6
+zktC*b<jgb=8@EKb%IWdnJi*!B*+W#r<rwI+o<L&Yn#2GXZB}QG15fwjL#*`S$rSqF
+zm|nxP;x5YQAoTS~GwY;RCzDtg{jbRkRhz5b)!{fu)Appf@D4z#TI9GdfS;}mbS+1S
+zUwn7I%X)V{NxBo?6=opeP67iO2V8_n4=KEpL>NE*YxsuS_<GPBroia9kJe3f$r7ja
+zG;MDJy)d;%W}GfV{PBGnK+^#=!<#`;l8$8@2?6i;-GR*9$09dD%QCJ8$Tjq7oaCL&
+z?F^h8n*uyi>YvDAVs~y6dCQRZ_&%NCcT>z>Svxbu`md~drWnfscgDWoE0p(wJ>gzA
+z=c?d}4gl`cj0<Dq{eokt-)@l!5y;+!bminYZ*}wo4Ff0~p!~tj?DO>O!Aa-_Iro*b
+z_tB2~)<l*9(;^qXi82q<llL8E%V_O4eyV;9>8$WLRo<Uw`Yv*x0N|64j|mPRH#90l
+zqW~v7L96ed%ECz)w7~g*5rV=25jcM^!c+A3_ZPC?rRoPvTGS+n4YARZ2Mozyd1J%V
+zoe!iWf?}NM1awuv1>!nR8p8MK{s*#^=qGsj;|JEcUI6qK*<b~rins_+ObC}nm68P!
+zi-jWG(T$7`T7AlH@qJy6s?}j`gd7SQ=?*yvqIa-&9cFe$cntwAYa#$i(des4K&97}
+z0Ze!uu^`t%za5hp6Ka8^hmJlt5O#OggH`5TpoQO^efeM;<aa#A<PwcpRAEgDHbk=d
+z0;&?-LT4=+>0V7VaHng!Fe_M*M<BY0t*}JSw=)!qkJ!R_Kr|lm0NuEbohy*uTf=Wr
+z-o-h3<(u}@ZV0^{lX!qRIUy7SBD{&<*Qj$1-ThET(iEURML%!rxBC>MV|>3|fMXjY
+z?5D>cDsXK=bPI~8H}~&bF9>6Tc$q5<Bclo#Dxu##XoaDOw~4}L1Tgd&p&S9OpFT}v
+zLvu^_x=m|aw)$kYeuqzPpMcQ>6~{-cef<I+M5Hkkg&2-7AqK%v3PL>qpT4_(TU}#&
+z_u7WK#)kU!^(|ZJ+YhH_E<yoO%7mC1K{|pA1UN}i@`xpA4VIPw@G0!$BSQ|KV#v|I
+z+b-;*uRW5k?iC2~m(f2xQqS7m72jIVW{x9e0)c?w0RTRweQZ(yfBy+7E_!6TP<aH=
+z4*K471G}82e*1If2_!s3jgLOhcG3%vW@*DZ4gLJlm9*-y1=?;DI*Q;8YJ2RDoUoLB
+z=g?~Q0KIf5Tiy$FxU=rXJ8Qk7cXDWi7YbR18G@gEi+lg!1!_ZCr>As>H@E9bPTujs
+zV}obe6ZU6!yU#y0!x<{NJ&St01=cJ1g=g|k=AErRTYjpDe&@)F<f1cGC#%j{&u%@t
+z{?w{l*_V#|PyD=!FE01yuXca>^d@;%!5Q^Q^@}EN-bznQ_T|E5uk^k?cz*B~#JjR(
+zwy?z$W4T<i@<Qyd6K4|NF7#Hn&X%-#VhaCITzY2k<ls5>T-n(@-eRa)aJhKJ1@71C
+z8TDHkZ#BJT^sa84EpBwrK68z26HUBdw#l1U8*bzMjosdrJ+p;9;YQxC?e$jo&6f0q
+zth`9P#p}W?ylwKX-acEro#y}OjQVVvr?lFeyT*OvM;f^~=Xlkzs`m@4y;*C*!gsdm
+z<diq3(*5Ph&$)oeR&Q2IxJdKKz22NE`sGQ1?tDIvjy<P#fA@KgODx*qDeUrQ?Yxq?
+z;CSA#yc5+YCQdB&W-g>>&e*ErJ1-lGJ*8_r>$ZE^J7(8)c;Y+f6f%A6O_^dr)E7D?
+zJ@W^9pW6GJ&YM=@SMc0&Z)TOd<!lK{Z@iG~nmRUhCEoZ%&EcAB=Ea_>TF;i99&7LH
+zmR^sk@A7RF(4CYFx(&uT9b>ed$neA$-i%h~#eNaX<XW(|JV!h$n`TRzygAKRva*ja
+zIkx0<^O^RO?Vifox0+@v>%Bz{o~CAR*4E4UYcCgVqJ=NE>vH2Gqvon*OxBVwM(N=f
+zpGwZgD4wvM*m`39v#UZ4FMqbkUF?33Whd#EKYc*{_b(h8`qa;Q*hc!dpQX57fv)Y*
+zl~s=yaF>^>t0!W)4;7i!6HB-cm#0(<T5e_omt8HSa5L=@h1EhiycZW%+cn&bZH1}Y
+zp25wGm=de)<?@;Fg7oT%XvNG#6f3=Bp}ZK%6;Q_a5^c4hR?G-0R(fkAs)a-s5E6ip
+z2=5d_wNMK0@|bG7N-<+sveH`v<y0t}p^WbgZM7Zb>?KexRrrkKR>8Wv-_b904~^O#
+z!epOgXbe6){Q(E_CkXz8;Ew=&v18+oq1{9GSW%>V+&V<_exAp!q)k8n2|N1uxnl||
+ziR6`Z{9KAkDekBvVMm=(6ob3`z@7?rS~wkwj{_${@gaIXR3n*Yo{y*3xWrgzEQukp
+z;)yP1bd6tmBK>AuD(8r%2hJrL9cV{V5fd;0_kM{l9aQ9lyat`2=U*Dln2<AkA|L5U
+z4#@LSVR*E|L~CBoP{a{#I1P^h&2V~w8C(1o6z|k?44eZv_z)RSqE6xR0}p((gfGQI
+zjML!2xmkQj@Bj?;VX_wM8=VQnFr0<Eepdo92Dao-KM4+Cp%};l4R9ugX$)S!fJRu_
+zM2$(#<j`T2B=h1IbO)}b;uEl7myu)}JIaz|X9`Jy`m13%5*3)>^Oj*ammVI8H^I3k
+zmYBcCJRP!cB*p{mbQ)1n&r1f@NZ)uRqbMoh9r(RQ&bUk@aSschum_2WFz_{no!%`*
+z3BG<46ODS+tVngHkyKjxY8q?7wyRP_OKEiY)iR0V@>9ZXhpYs(rNX}ygko-mL?+#m
+zyf{aGpydN{KK_1%Gd=7?sdC^hL3~ad0+EsUxSwW-`l|&*zUFKAx;ya)<luff(FU3$
+zmLhrM>4bm_Kw;DAPhQJrH@Yvrc22cgTth=U=pHaGZ9YTWKr7O4ITiX4v;%+-&-fAA
+z4(Eb*-!y4(qk^Z%n;!S)ZyH!y@s^SP$9ozMzO6^Rl@3?p?xwdcaqVcPUivI6F6TW^
+zo@Wg9Vz^Bb-ba7|_Q?k(M@GcGlut1*GG=vH6w=q)GFZrk11PtU-uup^@?UY2rl5a)
+z=ZV6N4{!X=+9!2K+h-F?Jf$0F6KlNjo8GOs*wo_L*6nTT@$~VtO}uw=zgIUvUwe16
+z@)1;X)E)iX9u@32#xEwX>p@D`rUQ!<!MteXAPs|P(MlV>kCA`@5z6U%7tN*$M8)mg
+zHNarYEc$&Eshw1H=`5S&K6fdd>lP`vtF*8iEQx{=1>QzbfWV6&7#W{xV8rThz<&hP
+zBK;i%8xiCqScHM8K=3XWVfZq_N3`{F?&{wmS`NS`?;RT(5kz0FLD`Za6k&xs%)df0
+zGD-mWQmFPq3cYywYC-hSC_l7kh@Z5Mi2qC=RHD!U&?H<3;8Tx}*@tkx7V_!!52qtm
+z0o$Gd9N3X%z>X|I(*YE`tFmvVGro@+bV;7%;#pnE2fD?xy2WSrd)BtjR<?am*)v<&
+z<E`xV^pn|2a#82JlA7_utfRX;3pdQ>Z2TanVK%41o740`PTOown>VM!o7w42-SJQZ
+z)n73ePQ5Voiv5jco`!+hwKngn!HdIVa||=V)^Il&W*55&Usbi-7Yq}*nGRifLRrQn
+zF8XYdTX{8)V~1$T$0?D~+<Vax^(Mu8DQvyT-TLw0Bb24sNa}98Ud^US=@RfF2@boM
+zWIHsANf!!H=r{D-C)w;T=trNF6o`2ed%+O0E+W{4;9n4kDZ*sHIcYtu`qXTy0X;%3
+z0AF<9Ap8T!(5S6@k9A}cjumz~@u@@63%p(KPd-iMy2Rs+8f(i1={$=%e~RFH2+EMf
+z2@fMK9@Jk)f;^0H7+Hr9h%Hjo<746Ax5C}?=M>iUA@F>vQC|Aj6Kt>4cf<q1J}h2C
+zum=JDM@3lA6Z^1urrD1S+=2_3d;wb^%p&a)0z6AeM=K1TPrZEi7(Y4Ezfu@s88s|>
+z5ZfPfw0CZ_A)4L5zL9*B!S`G~V@U8Y`Z-R^%I8dFtnz5)@%&@?a}1#8dS4$tKP;l2
+z)(+`CxLbM)Q#Vm$ZZGQ|`aG9))yJ^PLx!6SzUM~MncRZQnK_?DkIGo(WmEc`43TR|
+z<~ao-b4mtKm58dDMAKY^h-w&P@|;#gbs+Gh<0<W2q*#n%3`tKeI=uO&sPOY%RSyeV
+X8f8p$%;k8)<>(k1{l$8P*!=$mof<1#
+
+diff --git a/differometor/build.py b/differometor/build.py
+index 258c80e..d647e72 100644
+--- a/differometor/build.py
++++ b/differometor/build.py
+@@ -90,6 +90,37 @@ def _device_array(values, dtype=None) -> jnp.ndarray:
+ _structure_array = structure_array
+ 
+ 
++def _fixed(values) -> np.ndarray:
++    """A read-only index array that many instruction sets share instead of each building its own."""
++    array = np.array(values)
++    array.flags.writeable = False
++    return array
++
++
++# Output selections and function inputs that are the same for every component of a kind. A build
++# creates several thousand tiny index arrays, and creating one costs more than everything that is
++# done with it afterwards. Only arrays that `set_instructions` never changes are shared: output
++# rows and columns and function inputs, never positions in a system matrix (the sideband layout
++# shifts those in place).
++_NO_INPUT = _fixed([[0, 0, 0, 0, 0, 0, 0]])  # a function that reads no parameter
++_OUTPUT_0 = _fixed([0])
++_OUTPUT_00 = _fixed([0, 0])
++_OUTPUT_0000 = _fixed([0, 0, 0, 0])
++_OUTPUT_0123 = _fixed([0, 1, 2, 3])
++_OUTPUT_0112 = _fixed([0, 1, 1, 2])
++_OUTPUT_01011212 = _fixed([0, 1, 0, 1, 1, 2, 1, 2])
++_OUTPUT_ZEROS_7 = _fixed([0] * 7)
++_OUTPUT_ZEROS_13 = _fixed([0] * 13)
++_OUTPUT_ROWS_0011 = _fixed([0, 0, 1, 1])
++_OUTPUT_ROWS_MIRROR_MASS = _fixed([0, 1, 1, 2, 2, 3, 4])
++_OUTPUT_ROWS_BEAMSPLITTER_MASS = _fixed([0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4])
++# The shared output selections once more behind themselves, as the sideband layout needs them
++# when every entry of an instruction set lies in the carrier block (keyed by identity).
++_TWICE = {id(array): _fixed(array.tolist() * 2) for array in (_OUTPUT_0, _OUTPUT_00, _OUTPUT_0000, _OUTPUT_0112, _OUTPUT_01011212)}
++# Number of distinct output rows of the shared row selections.
++_DISTINCT_ROWS = {id(array): len(set(array.tolist())) for array in (_OUTPUT_ROWS_0011, _OUTPUT_ROWS_MIRROR_MASS, _OUTPUT_ROWS_BEAMSPLITTER_MASS)}
++
++
+ def _signal_base_matrix(carrier_base, system_size, full_size) -> BaseMatrix:
+     """
+     Constant entries of the signal matrix, taken from the entries of the finished carrier matrix.
+@@ -149,6 +180,23 @@ def _sideband_layout(row_indices: np.ndarray, column_indices: np.ndarray, system
+     build, and one NumPy call costs as much as the whole list operation.
+     """
+     rows, columns = row_indices.tolist(), column_indices.tolist()
++    if rows and max(rows) < system_size and max(columns) < system_size:
++        # The usual case (surfaces, noise sources): every entry lies in the carrier block, so
++        # nothing is shifted and every entry is copied once, in its original order.
++        new_companions = []
++        for companion in companions:
++            if companion is not None:
++                twice = _TWICE.get(id(companion))
++                if twice is None:
++                    values = companion.tolist()
++                    twice = np.array(values + values, dtype=companion.dtype)
++                companion = twice
++            new_companions.append(companion)
++        return (
++            np.array(rows + [row + system_size for row in rows], dtype=row_indices.dtype),
++            np.array(columns + [column + system_size for column in columns], dtype=column_indices.dtype),
++            new_companions,
++        )
+     in_block_rows = [row < system_size for row in rows]
+     in_block_columns = [column < system_size for column in columns]
+     if not all(in_block_columns):
+@@ -651,8 +699,8 @@ def build(setup: Setup):
+             set_instructions(
+                 signal_instructions,
+                 node,
+-                function_input_indices=np.array([[len(parameters) - 2, len(parameters) - 1]]),
+-                output_column_indices=np.array([0]),
++                function_input_indices=np.array([[len(parameters) - 2, len(parameters) - 1, 0, 0, 0, 0, 0]]),
++                output_column_indices=_OUTPUT_0,
+                 system_matrix_row_indices=np.array([system_size * 2 + signal_index]),
+                 system_matrix_column_indices=np.array([-1]),
+                 function_indices=[FUNCTIONS.index(signal_function)],
+@@ -731,8 +779,8 @@ def build(setup: Setup):
+                 set_instructions(
+                     carrier_instructions,
+                     node,
+-                    function_input_indices=np.array([[len(parameters) - 2, len(parameters) - 1]]),
+-                    output_column_indices=np.array([0]),
++                    function_input_indices=np.array([[len(parameters) - 2, len(parameters) - 1, 0, 0, 0, 0, 0]]),
++                    output_column_indices=_OUTPUT_0,
+                     system_matrix_row_indices=np.array([component_index]),
+                     system_matrix_column_indices=np.array([-1]),
+                     function_indices=[FUNCTIONS.index(laser)],
+@@ -741,8 +789,8 @@ def build(setup: Setup):
+                 set_instructions(
+                     noise_instructions,
+                     node,
+-                    function_input_indices=np.array([[0]]),
+-                    output_column_indices=np.array([0]),
++                    function_input_indices=_NO_INPUT,
++                    output_column_indices=_OUTPUT_0,
+                     system_matrix_row_indices=np.array([component_index]),
+                     system_matrix_column_indices=np.array([component_index]),
+                     function_indices=[FUNCTIONS.index(vacuum_quantum_noise)],
+@@ -766,8 +814,8 @@ def build(setup: Setup):
+                 set_instructions(
+                     noise_instructions,
+                     node,
+-                    function_input_indices=np.array([[len(parameters) - 2, len(parameters) - 1]]),
+-                    output_column_indices=np.array([0, 1, 2, 3]),
++                    function_input_indices=np.array([[len(parameters) - 2, len(parameters) - 1, 0, 0, 0, 0, 0]]),
++                    output_column_indices=_OUTPUT_0123,
+                     system_matrix_row_indices=np.array(
+                         [component_index, component_index, component_index + system_size, component_index + system_size]
+                     ),
+@@ -867,12 +915,12 @@ def build(setup: Setup):
+                     ]
+                 )
+ 
+-                output_column_indices = np.array([0, 1, 1, 2])
+-                system_matrix_row_indices = component_index + np.array([1, 1, 3, 3])
+-                system_matrix_column_indices = component_index + np.array([0, 2, 0, 2])
++                output_column_indices = _OUTPUT_0112
++                system_matrix_row_indices = np.array([component_index + 1, component_index + 1, component_index + 3, component_index + 3])
++                system_matrix_column_indices = np.array([component_index, component_index + 2, component_index, component_index + 2])
+ 
+-                noise_output_column_indices = np.array([0, 0])
+-                noise_system_matrix_indices = component_index + np.array([1, 3])
++                noise_output_column_indices = _OUTPUT_00
++                noise_system_matrix_indices = np.array([component_index + 1, component_index + 3])
+ 
+             elif data["component"] == "beamsplitter":
+                 refractive_index_left_position = surfaces_to_refractive_index_parameter_position[node].get("left", 1)
+@@ -930,12 +978,12 @@ def build(setup: Setup):
+                     ]
+                 )
+ 
+-                output_column_indices = np.array([0, 1, 0, 1, 1, 2, 1, 2])
+-                system_matrix_row_indices = component_index + np.array([1, 1, 3, 3, 5, 5, 7, 7])
+-                system_matrix_column_indices = component_index + np.array([2, 4, 0, 6, 0, 6, 2, 4])
++                output_column_indices = _OUTPUT_01011212
++                system_matrix_row_indices = np.array([component_index + offset for offset in (1, 1, 3, 3, 5, 5, 7, 7)])
++                system_matrix_column_indices = np.array([component_index + offset for offset in (2, 4, 0, 6, 0, 6, 2, 4)])
+ 
+-                noise_output_column_indices = np.array([0, 0, 0, 0])
+-                noise_system_matrix_indices = component_index + np.array([1, 3, 5, 7])
++                noise_output_column_indices = _OUTPUT_0000
++                noise_system_matrix_indices = np.array([component_index + offset for offset in (1, 3, 5, 7)])
+ 
+             # Initialize the carrier matrix diagonal block for the surface.
+             carrier_matrix[
+@@ -970,7 +1018,7 @@ def build(setup: Setup):
+             set_instructions(
+                 noise_instructions,
+                 node,
+-                function_input_indices=np.array([[loss_position]]),
++                function_input_indices=np.array([[loss_position, 0, 0, 0, 0, 0, 0]]),
+                 output_column_indices=noise_output_column_indices,
+                 system_matrix_row_indices=noise_system_matrix_indices,
+                 system_matrix_column_indices=noise_system_matrix_indices,
+@@ -1083,8 +1131,8 @@ def build(setup: Setup):
+                         [signal_frequency_position, parameter_position + 2, parameter_position + 1, parameter_position, refractive_index_left_position, refractive_index_right_position, 2],
+                     ]
+                 ),
+-                output_row_indices=np.array([0, 1, 1, 2, 2, 3, 4]),
+-                output_column_indices=np.array([0] * 7),
++                output_row_indices=_OUTPUT_ROWS_MIRROR_MASS,
++                output_column_indices=_OUTPUT_ZEROS_7,
+                 system_matrix_row_indices=system_matrix_row_indices,
+                 system_matrix_column_indices=system_matrix_column_indices,
+                 function_indices=[
+@@ -1171,8 +1219,8 @@ def build(setup: Setup):
+                         [signal_frequency_position, parameter_position + 2, parameter_position + 1, parameter_position, refractive_index_left_position, refractive_index_right_position, parameter_position + 3],
+                     ]
+                 ),
+-                output_row_indices=np.array([0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4]),
+-                output_column_indices=np.array([0] * 13),
++                output_row_indices=_OUTPUT_ROWS_BEAMSPLITTER_MASS,
++                output_column_indices=_OUTPUT_ZEROS_13,
+                 system_matrix_row_indices=system_matrix_row_indices,
+                 system_matrix_column_indices=system_matrix_column_indices,
+                 function_indices=[
+@@ -1249,8 +1297,8 @@ def build(setup: Setup):
+         set_instructions(
+             carrier_instructions,
+             f"{source}_{target}",
+-            function_input_indices=np.array([[0, parameter_position, parameter_position + 1]]),
+-            output_column_indices=np.array([0, 0]),
++            function_input_indices=np.array([[0, parameter_position, parameter_position + 1, 0, 0, 0, 0]]),
++            output_column_indices=_OUTPUT_00,
+             system_matrix_row_indices=np.array([source_input_index, target_input_index]),
+             system_matrix_column_indices=np.array([target_output_index, source_output_index]),
+             function_indices=[FUNCTIONS.index(space)],
+@@ -1262,12 +1310,12 @@ def build(setup: Setup):
+             f"{source}_{target}",
+             function_input_indices=np.array(
+                 [
+-                    [signal_frequency_position, parameter_position, parameter_position + 1],
+-                    [signal_frequency_position, parameter_position, parameter_position + 1],
++                    [signal_frequency_position, parameter_position, parameter_position + 1, 0, 0, 0, 0],
++                    [signal_frequency_position, parameter_position, parameter_position + 1, 0, 0, 0, 0],
+                 ]
+             ),
+-            output_row_indices=np.array([0, 0, 1, 1]),
+-            output_column_indices=np.array([0, 0, 0, 0]),
++            output_row_indices=_OUTPUT_ROWS_0011,
++            output_column_indices=_OUTPUT_0000,
+             system_matrix_row_indices=np.array(
+                 [
+                     source_input_index,
+@@ -1302,20 +1350,19 @@ def build(setup: Setup):
+             )
+             system_matrix_column_indices = np.array(signal_matrix_indices)
+ 
++            modulation_inputs = [signal_frequency_position, parameter_position, parameter_position + 1, 0, 0, 0, 0]
++            if space_signal_number == 1:  # the usual case, without np.tile and np.repeat
++                modulation_output_columns, modulation_output_rows = _OUTPUT_0000, _OUTPUT_ROWS_0011
++            else:
++                modulation_output_columns = np.array([0, 0, 0, 0] * space_signal_number)
++                modulation_output_rows = np.repeat(np.arange(space_signal_number * 2), 2)
++
+             set_instructions(
+                 signal_instructions,
+                 f"{source}_{target}_modulation",
+-                function_input_indices=np.tile(
+-                    np.array(
+-                        [
+-                            [signal_frequency_position, parameter_position, parameter_position + 1],
+-                            [signal_frequency_position, parameter_position, parameter_position + 1],
+-                        ]
+-                    ),
+-                    (space_signal_number, 1),
+-                ),
+-                output_column_indices=np.array([0, 0, 0, 0] * space_signal_number),
+-                output_row_indices=np.repeat(np.arange(space_signal_number * 2), 2),
++                function_input_indices=np.array([modulation_inputs] * (2 * space_signal_number)),
++                output_column_indices=modulation_output_columns,
++                output_row_indices=modulation_output_rows,
+                 system_matrix_row_indices=system_matrix_row_indices,
+                 system_matrix_column_indices=system_matrix_column_indices,
+                 function_indices=[FUNCTIONS.index(space_modulation), FUNCTIONS.index(space_modulation_lower)] * space_signal_number,
+@@ -1345,8 +1392,8 @@ def build(setup: Setup):
+         set_instructions(
+             noise_instructions,
+             node_port,
+-            function_input_indices=np.array([[0]]),
+-            output_column_indices=np.array([0]),
++            function_input_indices=_NO_INPUT,
++            output_column_indices=_OUTPUT_0,
+             system_matrix_row_indices=np.array([port_index]),
+             system_matrix_column_indices=np.array([port_index]),
+             function_indices=[FUNCTIONS.index(vacuum_quantum_noise)],
+@@ -1487,11 +1534,16 @@ def pairs_to_arrays(
+         signal_arrays["output_column_indices"].append(instruction["output_column_indices"])
+ 
+         if "output_row_indices" in instruction:
+-            signal_arrays["output_row_indices"].append(instruction["output_row_indices"].flatten() + signal_component_number)
+-            individual_rows = len(set(instruction["output_row_indices"].flatten().tolist()))
++            output_rows = instruction["output_row_indices"]
++            if output_rows.ndim != 1:
++                output_rows = output_rows.flatten()
++            signal_arrays["output_row_indices"].append(output_rows + signal_component_number)
++            individual_rows = _DISTINCT_ROWS.get(id(output_rows))
++            if individual_rows is None:
++                individual_rows = len(set(output_rows.tolist()))
+             signal_component_number += individual_rows
+         else:
+-            signal_arrays["output_row_indices"].append(np.full(len(instruction["output_column_indices"]), float(signal_component_number)))
++            signal_arrays["output_row_indices"].append(np.array([float(signal_component_number)] * len(instruction["output_column_indices"])))
+             signal_component_number += 1
+ 
+         signal_arrays["system_matrix_row_indices"].append(instruction["system_matrix_row_indices"])
+@@ -1532,7 +1584,7 @@ def pairs_to_arrays(
+         arrays["function_indices"].extend(instructions[component]["function_indices"])
+         arrays["output_column_indices"].append(instructions[component]["output_column_indices"])
+         arrays["output_row_indices"].append(
+-            np.full(len(instructions[component]["output_column_indices"]), float(len(components) - 1))
++            np.array([float(len(components) - 1)] * len(instructions[component]["output_column_indices"]))
+         )
+         arrays["system_matrix_row_indices"].append(instructions[component]["system_matrix_row_indices"])
+         arrays["system_matrix_column_indices"].append(instructions[component]["system_matrix_column_indices"])
+-- 
+2.53.0
+

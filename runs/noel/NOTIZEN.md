@@ -1,8 +1,8 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 21:00, nach Runde 14. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 21:18, nach Runde 15. **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
-**Zuerst lesen:** «Runde 14», «Stand 20:12» und «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
+**Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
 ## Messwerte
 
@@ -90,6 +90,33 @@ Runde 11 gegen Runde 10 (`10ffc61` → `2e1cef1`), je 14 Läufe im Wechsel, Medi
 Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar ist er in der Gradient-Phase und direkt am Rückwärts-Callback (Mac, je 40 Aufrufe, dreimal im Wechsel: 7,28 bis 7,36 → 7,00 bis 7,03 ms).
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## Arbeit für Philips Stand (seit 21.11., 21:02)
+
+Noel um 21:02 auf die Frage, ob die Schleife Patches für Philips Stand bauen soll statt `noel` zu optimieren: «Ja, für Philips Stand». Der Auftrag der Schleife ist entsprechend neu (`01bbf197`, alle 30 Minuten um :13 und :43).
+
+**So läuft eine Runde:** `git fetch`, dann Philips neue Commits und seine `runs/philip/NOTIZEN.md` lesen (was ist offen, was baut er gerade). Arbeitskopie des neuesten `origin/philip-fastest` als `git worktree` im Scratchpad (zweimal: unverändert und geändert), Wechselvergleich mit `runs/noel/ab.py` und in Docker mit `runs/noel/ab_docker.py` (Images aus beiden Kopien), Prüfungen: `benchmark.py` `PASS` und Arrays bitgleich, alle `runs/philip/test_*.py` und `runs/flags/test_tuning.py` mit `PYTHONPATH=.`, `runs/check_setups.py`, `runs/noel/test_variants.py <kopie>` (dort sind die zwei Varianten mit Amplitudenmodulation erwartungsgemäss über JAX), `runs/noel/variant_run.py` auf Homodyne-Varianten. Den mitgelieferten Bytecode der geänderten Module neu erzeugen. Dann `git format-patch -1 --binary` nach `runs/noel/patches/`. `main`, `philip-fastest` und alle anderen Branches bleiben unberührt.
+
+**Patches (anwenden auf `philip-fastest`, in dieser Reihenfolge prüfen, ob die Basis noch passt):**
+
+| Patch | Basis | Inhalt | Gemessen | Stand |
+| --- | --- | --- | --- | --- |
+| [`patches/philip-fastest-build.patch`](patches/philip-fastest-build.patch) | `8e7c4f1` | Build-Schritt: gemeinsam genutzte konstante Index-Arrays, Funktionseingaben ohne Auffüllen, kein `np.tile` bei einem Signal pro Raum, kurzer Weg in der Seitenband-Erweiterung | `run_build_step` auf dem M4 3,97 → 3,38 ms (erster Aufruf 4,66 → 4,12 ms). Build-Phase von `benchmark.py`, 14 Läufe im Wechsel: Mac 10,9 → 10,5 ms, Docker `--cpus 1` 9,9 → 9,3 ms. Auf dem Xeon nicht gemessen, dort kostet der Build rund 17 ms, zu erwarten sind 1,5 bis 2,5 ms | offen, wartet auf Philip |
+| [`patches/main-homodyne.patch`](patches/main-homodyne.patch) | `50341f9` (`main`) | Balanced Homodyne und `sqrt`-Verknüpfungen im schnellen Weg | siehe Runde 12 | nur noch für `main` sinnvoll, auf `philip-fastest` durch Philips `708803d` überholt |
+
+```bash
+git fetch origin && git checkout philip-fastest
+git show origin/noel:runs/noel/patches/philip-fastest-build.patch | git am
+```
+
+Zum Build-Patch (Runde 15, 21:02 bis 21:18):
+
+- Alle Ausgaben von `run_build_step` sind für 27 Setups identisch (946 Arrays, `test_build.py --dump` und `--compare` mit `PYTHONHASHSEED=0`), die Benchmark-Arrays bitgleich, `_sideband_layout` gegen die Referenz auf 20'000 Zufallsfällen identisch. Alle elf Skripte unter `runs/philip` und `runs/flags` laufen durch, `variant_run.py` meldet `PASS` für Fixture, Homodyne-Variante und zwei Zufalls-UIFOs.
+- Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
+- Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
+- Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Weitere Hebel für Philips Linie** stehen in der Tabelle von Runde 14 (Frequenzblöcke im Vorwärtslauf, Rausch-Summen ohne Zwischenfelder, Imports).
 
 ## Runde 14 (21.11., 20:55 bis 21:00): Schleife alle 30 Minuten, Blick in Philips Stand
 
@@ -684,5 +711,6 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - Eine Änderung bleibt nur, wenn sie im Wechselvergleich schneller ist und alle Prüfungen unverändert gut ausfallen.
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.
 - Discord (Noel am 21.11. gegen 14:35): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:13: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
-- Noel am 21.11. um 20:54: caffeinate wieder starten, Schleife alle 30 Minuten (Auftrag `a794ba8a`, :13 und :43).
+- Noel am 21.11. um 20:54: caffeinate wieder starten, Schleife alle 30 Minuten (:13 und :43).
+- Noel am 21.11. um 21:02: Die Schleife baut Patches für Philips Stand (`philip-fastest`) statt `noel` zu optimieren (Auftrag `01bbf197`). Gepusht wird weiter nur `noel`. Keine eigenen neuen Eingriffe in JAX/XLA-Interna, den Zeitnehmer oder die Imports von `benchmark.py` ohne Noels ausdrückliches Ja.
 - Seit Runde 9 (21.11.) deckt der schnelle Weg Balanced-Homodyne-Detektoren und Verknüpfungen mit `jnp.sqrt` ab. Auftrag: Feyers Zusatz zu den Setup-Varianten, von Noel weitergegeben.
