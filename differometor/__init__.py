@@ -8,7 +8,13 @@ exposed through a module-level ``__getattr__`` (PEP 562) and only imported on
 first use.  ``from differometor import visualize_setup`` keeps working.
 """
 
-from differometor.setups import Setup
+import jax as _jax
+
+# SX2 experiment (grey zone - preparation only, NOT for submission without Feyer approval).
+# Disables most JAX-level (jaxpr) optimizations globally before any tracing/compilation.
+_jax.config.update("jax_disable_most_optimizations", True)
+
+from differometor.setups import Setup  # noqa: E402
 from differometor.simulate import run, run_build_step, run_simulation_step, simulate
 from differometor.components import power_detector, signal_detector
 
