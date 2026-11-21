@@ -1,0 +1,52 @@
+From 8b6fdd666c43fe0810eb8f6f321981a0c2a86d62 Mon Sep 17 00:00:00 2001
+From: Noel Blatter <noel.blatter@gmail.com>
+Date: Sat, 21 Nov 2026 23:52:56 +0100
+Subject: [PATCH] Docker image with bytecode, like a checkout with pip install
+
+The Dockerfile set PYTHONDONTWRITEBYTECODE=1 before pip ran. pip then installs
+every package without .pyc files, and each run in the container compiles JAX,
+NumPy and all other modules again, inside the timed import phase. In addition
+.dockerignore left out every __pycache__, so the shipped, hash-checked
+bytecode of differometor was missing in the image as well.
+
+Same code (9a31fa1), 6 alternating runs on an M4 with one CPU: imports
+248.3 -> 113.2 ms, complete first run 320.0 -> 187.0 ms. Nothing changes for
+a run outside Docker.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .dockerignore | 1 -
+ Dockerfile    | 6 +++++-
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/.dockerignore b/.dockerignore
+index 8f3fd1f..00cc293 100644
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -1,6 +1,5 @@
+ .git
+ .venv
+-**/__pycache__
+ *.egg-info
+ runs/*.npz
+ runs/*.log
+diff --git a/Dockerfile b/Dockerfile
+index 19d11b9..2146258 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,7 +1,11 @@
+ # Linux environment for `python benchmark.py --cpus 1` (CPU affinity needs Linux).
+ FROM python:3.12-slim
+ 
+-ENV PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
++# PYTHONDONTWRITEBYTECODE is deliberately not set: with it pip installs every package without
++# bytecode, and each run in the container compiles JAX, NumPy and everything else again inside
++# the timed import phase (imports 258 ms instead of 116 ms on an M4). The image is meant to behave
++# like a checkout with `pip install`, which is what the benchmark is measured in.
++ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+ WORKDIR /app
+ 
+ # Dependencies first so code changes do not invalidate this layer.
+-- 
+2.53.0
+
