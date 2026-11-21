@@ -1,13 +1,23 @@
 # Fragen an Feyer
 
-Stand: Sa 21.11.2026, Branch `noel` (Philips Branch plus Max' `lu-once` und `nacht` plus acht Optimierungsrunden vom 21.11.).
+Stand: Sa 21.11.2026, 15:40, Branch `noel` (Philips Branch plus Max' `lu-once` und `nacht` plus neun Runden vom 21.11.).
 Zu stellen am Sa 21.11. bei der Challenge-Präsentation (11–12 Uhr) oder direkt beim Mentor.
 
 ## Unser Stand in drei Sätzen (zum Erklären vor der Frage)
 
 - Der Rechenkern läuft nicht mehr in JAX/XLA, sondern in NumPy/SciPy: Sparse-LU mit SuperLU, eingebunden über `jax.pure_callback`. Den Gradienten liefert eine handgeschriebene Rückwärtsregel (`jax.custom_vjp`).
-- Das gilt nur für Setups vom Typ des Benchmarks. Alle anderen laufen weiter über den Original-JAX-Code.
+- Das gilt für Setups mit einem Rausch-Detektor, einfach oder Balanced Homodyne (seit Runde 9). Alle anderen laufen weiter über den Original-JAX-Code.
 - Gemessen auf einem Apple M4: Original 12,8 s → 0,43 s auf macOS und 0,50 s in Docker (Linux, `--cpus 1`, aarch64). Überall `PASS`, auch auf x86-64 (dort bisher nur emuliert geprüft). Eine Zeitmessung auf echter x86-Hardware fehlt noch.
+
+## Schon beantwortet (Discord, 21.11., von Noel weitergegeben)
+
+Im Discord nur mitlesen: Noel hat festgelegt, dass wir dort nichts schreiben und keine Fragen stellen.
+
+| Frage | Antwort von Feyer | Folge für uns |
+| --- | --- | --- |
+| C3: andere Setups? | «The final evaluation will use a similar optical setup like the one included in the GitHub repo, but with slightly different parameters and components. Your simulator submissions should still work with that slight setup variation.» | Der schnelle Weg deckt seit Runde 9 auch Balanced-Homodyne-Detektoren ab. Der Zufallsgenerator, aus dem das Fixture stammt, wählt sie in der Hälfte der Fälle. Nachgestellt mit 14 Varianten, alle `PASS` bei 0,45 bis 0,49 s (Mac). Siehe `runs/noel/NOTIZEN.md`, Runde 9 |
+| B1, B2 (Teil): wie viele CPUs? | Jonathan Klimesch, 14:30: eine logische CPU, wie `--cpus 1` im Benchmark | Mehr Kerne nützen nichts. Unser Weg ist ohnehin einfädig |
+| B2 (Teil): zählt die Kompilation? | Ja. Gemessen wird der komplette Erstlauf: Setup, Kompilation, Forward, Sensitivity und Gradient | Wie bisher angenommen |
 
 ## Die sechs wichtigsten Fragen
 
@@ -17,7 +27,7 @@ Wenn nur wenig Zeit ist, diese zuerst. Von den ersten fünf hängt ab, ob unsere
 2. Wir haben schon vor dem offiziellen Start am öffentlichen Kit gearbeitet. Ist das erlaubt? (D1)
 3. Auf welcher Maschine und mit welchem Befehl wird die Wertung gemessen? (B1, B2)
 4. Wie geht ihr mit der Streuung um, wenn die Gesamtzeit unter 1,5 s liegt? (B3)
-5. Testet ihr auch andere Setups als das UIFO aus dem Benchmark? (C3)
+5. Beantwortet: Die Schlussbewertung nutzt ein ähnliches Setup mit leicht anderen Parametern und Komponenten (C3, siehe oben).
 6. Darf unser Code eine JAX-Einstellung setzen, die den Compiler weniger optimieren lässt? Das spart in Docker 40 ms, also 8 % der Gesamtzeit. (B6)
 
 ---
@@ -78,7 +88,7 @@ Wenn nur wenig Zeit ist, diese zuerst. Von den ersten fünf hängt ab, ob unsere
 | Antwort | Folge |
 | --- | --- |
 | A1 Nein (kein SciPy) | Sparse-Ansatz in reinem JAX nachbauen. Max' `lu-once` und die Rausch-Abkürzung im JAX-Pfad werden dann zur Hauptsache. |
-| A3 oder C3: andere Setups zählen | JAX-Rückfall beschleunigen (`lax.switch` ersetzen, Kopien vermeiden, Rausch-Abkürzung). |
+| C3: ähnliche Setups zählen (beantwortet) | Erledigt in Runde 9: Balanced Homodyne und verknüpfte Parameter laufen über den schnellen Weg. Offen bleibt der JAX-Rückfall für Setups mit mehreren Rausch-Detektoren, die `benchmark.py` aber nicht auslesen kann. |
 | B5 Ja (neue Pakete erlaubt) | Schnelleren Sparse-Löser prüfen, Import-Zeit dabei mitmessen. |
 | B6 Ja (JAX-Einstellung im Code erlaubt) | Eine Zeile in `differometor/__init__.py`: `jax.config.update("jax_disable_most_optimizations", True)`. Danach neu messen und alle Prüfungen laufen lassen. Die Änderung in der Abgabe offenlegen. |
 | A8 Nein | SuperLU wieder über `scipy.sparse.linalg` importieren (in `fast.py` reicht dafür der Rückfall in `_load_superlu`). |
@@ -88,5 +98,5 @@ Wenn nur wenig Zeit ist, diese zuerst. Von den ersten fünf hängt ab, ob unsere
 
 ## Noch selbst zu erledigen (keine Frage an Feyer)
 
-- Zeitmessung von `noel` auf echter x86-Hardware mit `--cpus 1`, mehrfach in frischen Prozessen. Die Korrektheit auf x86-64 ist am 21.11. emuliert geprüft (`PASS`, alle Prüfskripte). Joel hat eine passende Maschine (AMD EPYC). Sein eigener Stand braucht dort laut seinem README 0,76 s, auf Noels Rechner ist `noel` rund 9 % schneller als Joels Stand.
+- Philip hat `noel` auf einem Xeon Platinum 8468 gemessen (`origin/philip:_nacht/vm/jobs/`): 726 ms im Erstlauf für `c15f97e`, sein eigener Stand `philip-nacht` 441 ms. Sein Stand fällt bei Balanced Homodyne aber auf JAX zurück (auf Noels Mac 9,8 s statt 0,45 s). Zahlen in `runs/noel/NOTIZEN.md`. Früherer Eintrag: Zeitmessung von `noel` auf echter x86-Hardware mit `--cpus 1`, mehrfach in frischen Prozessen. Die Korrektheit auf x86-64 ist am 21.11. emuliert geprüft (`PASS`, alle Prüfskripte). Joel hat eine passende Maschine (AMD EPYC). Sein eigener Stand braucht dort laut seinem README 0,76 s, auf Noels Rechner ist `noel` rund 9 % schneller als Joels Stand.
 - Erledigt am 21.11.: `runs/check_fast.py --fallback` und `runs/check_setups.py` laufen auf diesem Branch durch, auch mit Max' `lu-once` im JAX-Rückfall. Die Werte stehen in `runs/noel/NOTIZEN.md`.

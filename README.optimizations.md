@@ -219,6 +219,25 @@ In dieser Runde ausserdem gemessen und verworfen: ein Residuum weniger (netto nu
 
 Zwei Befunde ausserhalb unserer Reichweite: Der JAX-Schalter `jax_disable_most_optimizations` würde 40 ms sparen (Regelfrage an Feyer), und Pythons Speicherbereinigung kostet während `import jax` rund 16 ms, bevor unser Paket überhaupt geladen ist.
 
+## Neunte Runde vom 21.11. (Branch `noel`): Setup-Varianten
+
+Feyer hat am 21.11. ergänzt, dass die Schlussbewertung ein ähnliches Setup mit leicht anderen Parametern und Komponenten nutzt. Das öffentliche Fixture stammt aus dem Zufallsgenerator `uifo(3, random=True)`, und der wählt als Auslese in der Hälfte der Fälle einen Balanced-Homodyne-Detektor. Solche Setups liefen bisher über den dichten JAX-Weg.
+
+Der schnelle Weg deckt jetzt ab:
+
+- **Balanced-Homodyne-Detektoren** (`qhd`): zwei Ports, der zweite mit dem Phasenfaktor des Detektors.
+- **Verknüpfte Parameter** mit `jnp.sqrt` (Amplitudenmodulation in aLIGO, Voyager und UIFO).
+
+| Setup | vorher | nachher |
+|---|---|---|
+| Öffentliches Fixture, Mac (9 Läufe im Wechsel) | 0,450 s | 0,449 s |
+| Öffentliches Fixture, Docker `--cpus 1` (8 Läufe im Wechsel) | 0,519 s | 0,519 s |
+| Fixture mit Balanced Homodyne statt Detektor, Mac | 10,06 s | **0,452 s** |
+
+- **Nachgestellte Schlussbewertung:** `runs/noel/variant_fixture.py` erzeugt eine Variante des Fixtures (leicht veränderte Werte, getauschte Komponenten, Homodyne-Auslese oder ein neues Zufalls-UIFO) und rechnet die Referenz-Sensitivitäten mit dem unveränderten Original-Code. `runs/noel/variant_run.py` lässt den echten `benchmark.py` darauf laufen. 14 Varianten, alle `PASS`: 0,45 bis 0,49 s auf dem Mac, 0,52 bis 0,55 s in Docker mit einer CPU, Fehler gegen die Referenz höchstens 8,3e-8.
+- **Gegen das Original-JAX:** `runs/noel/test_variants.py` vergleicht 21 Zufalls-Setups (1×1 bis 4×4, alle drei Modulationsarten, beide Auslesen). Grösste Abweichung von `ln s`: 4,9e-7, Gradient 2,4e-8.
+- Für das öffentliche Fixture ändert sich nichts: gleiche Ausgaben, gleiche Prüfwerte.
+
 ## Wo die verbleibende Zeit steckt
 
 Im First-Run (ca. 0,4 s auf macOS) steckt kaum noch Physik:
@@ -239,7 +258,7 @@ Weitere Optimierungen an der Physik bringen für den Gesamtwert also nur noch we
 - **Gegen das Original (dichtes JAX):**
   - Sensitivität 5,8e-9, Gradient 8,0e-8, Signal 1,9e-7.
   - Einzelne Gradienteneinträge in der Größenordnung 1e-13 bei einem Maximum von 5,8e4 sind numerisches Rauschen. Sie weichen schon zwischen dem Original und der ersten Fast-Path-Version um bis zu 100 % ab.
-- **Andere Setups:** `runs/check_setups.py` vergleicht gegen JAX und läuft für aLIGO (Fast-Path), aLIGO mit Linking und Voyager mit Homodyn-Detektoren (beide über JAX). Die Abweichungen liegen bei höchstens ca. 1e-8.
+- **Andere Setups:** `runs/check_setups.py` vergleicht gegen JAX für aLIGO, aLIGO mit Linking und Voyager mit Homodyne-Detektor. Seit der neunten Runde laufen alle über den Fast-Path, die Abweichungen liegen bei höchstens ca. 2e-8. `runs/noel/test_variants.py` prüft dazu 21 Zufalls-UIFOs.
 - **Ableitung nach Frequenzen:** Wird nach etwas anderem als den Designvariablen abgeleitet, fällt der Dispatcher korrekt auf JAX zurück (`runs/check_fast.py --fallback`).
 
 ## Reproduzieren
