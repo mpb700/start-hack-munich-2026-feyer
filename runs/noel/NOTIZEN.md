@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 21:15, nach Runde 14. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 21:00, nach Runde 14. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Runde 14», «Stand 20:12» und «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -91,7 +91,7 @@ Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar 
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
 
-## Runde 14 (21.11., 20:55 bis 21:15): Schleife alle 30 Minuten, Blick in Philips Stand
+## Runde 14 (21.11., 20:55 bis 21:00): Schleife alle 30 Minuten, Blick in Philips Stand
 
 Noel um 20:54: «starte wieder caffeinate und arbeite alle 30 minuten, die anderen Teams holen auf». `caffeinate -is` läuft, der Laptop hängt am Strom, die Schleife feuert jetzt um :13 und :43 (Auftrag `a794ba8a`, der alte Zwei-Stunden-Auftrag ist gelöscht).
 
