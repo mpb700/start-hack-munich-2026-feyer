@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 21:48, nach Runde 17. **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 22:15, nach Runde 18. **Beide Patches sind seit 21:49 in `philip-fastest` und `main` (`9a31fa1`).** **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -101,10 +101,10 @@ Noel um 21:02 auf die Frage, ob die Schleife Patches für Philips Stand bauen so
 
 | Patch | Inhalt | Gemessen (M4, Median) | Stand |
 | --- | --- | --- | --- |
-| [`patches/philip-fastest-build.patch`](patches/philip-fastest-build.patch) | Build-Schritt (`build.py`): gemeinsam genutzte konstante Index-Arrays, Funktionseingaben ohne Auffüllen, kein `np.tile` bei einem Signal pro Raum, kurzer Weg in der Seitenband-Erweiterung | `run_build_step` 3,97 → 3,38 ms (erster Aufruf 4,66 → 4,12 ms). Build-Phase von `benchmark.py`, 14 Läufe im Wechsel: Mac 10,9 → 10,5 ms, Docker `--cpus 1` 9,9 → 9,3 ms | offen, wartet auf Philip |
-| [`patches/philip-fastest-forward.patch`](patches/philip-fastest-forward.patch) | Vorwärtslauf (`fast.py`): Dual-Zahlen ohne Null-Terme, Rausch-Summen direkt in die rechte Seite | Einträge mit Ableitungen 2,33 → 1,96 ms, Vorwärts-Callback 17,3 → 16,8 ms. Forward-Phase von `benchmark.py`: Mac 22,0 → 21,1 ms (14 Läufe), Docker `--cpus 1` 27,5 → 26,3 ms (16 Läufe), dort Gradient-Phase 5,4 → 5,7 ms | offen, wartet auf Philip |
+| [`patches/philip-fastest-build.patch`](patches/philip-fastest-build.patch) | Build-Schritt (`build.py`): gemeinsam genutzte konstante Index-Arrays, Funktionseingaben ohne Auffüllen, kein `np.tile` bei einem Signal pro Raum, kurzer Weg in der Seitenband-Erweiterung | `run_build_step` 3,97 → 3,38 ms (erster Aufruf 4,66 → 4,12 ms). Build-Phase von `benchmark.py`, 14 Läufe im Wechsel: Mac 10,9 → 10,5 ms, Docker `--cpus 1` 9,9 → 9,3 ms. **Xeon: 18,4 → 17,2 ms** | übernommen als `13bd58d` |
+| [`patches/philip-fastest-forward.patch`](patches/philip-fastest-forward.patch) | Vorwärtslauf (`fast.py`): Dual-Zahlen ohne Null-Terme, Rausch-Summen direkt in die rechte Seite | Einträge mit Ableitungen 2,33 → 1,96 ms, Vorwärts-Callback 17,3 → 16,8 ms. Forward-Phase von `benchmark.py`: Mac 22,0 → 21,1 ms (14 Läufe), Docker `--cpus 1` 27,5 → 26,3 ms (16 Läufe), dort Gradient-Phase 5,4 → 5,7 ms. **Xeon: Forward 34,5 → 33,3 ms, Gradient 11,1 → 11,5 ms** | übernommen als `9a31fa1` |
 
-Auf dem Xeon ist nichts davon gemessen. Zu erwarten sind beim Build 1,5 bis 2,5 ms (er kostet dort rund 17 ms) und beim Vorwärtslauf 1,5 bis 3 ms (Einträge mit Ableitungen kosten dort 10 ms, die Rausch-Summen 2,1 ms).
+Beide sind seit 21:49 in `philip-fastest` und `main`. Die Xeon-Zahlen stehen unter «Runde 18». Ein neuer Patch muss ab jetzt auf `9a31fa1` aufsetzen.
 
 ```bash
 git fetch origin && git checkout philip-fastest
@@ -128,6 +128,23 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 18 (21.11., 22:13 bis 22:15): Philip hat beide Patches übernommen und auf dem Xeon gemessen.** `origin/philip-fastest` und `origin/main` stehen auf `9a31fa1` (21:49): `13bd58d` ist der Build-Patch, `9a31fa1` der Vorwärts-Patch, unverändert übernommen. `origin/philip` (`3983044`, 21:59) enthält die Messungen dazu.
+
+Philips Messung auf dem Xeon Platinum 8468 (Auftrag `patches-2145`, 14 Läufe im Wechsel, Median / Minimum in ms, alle `PASS`):
+
+| Stand | Erstlauf | Build | Forward | Gradient | Warm Forward | Warm Gradient |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Basis `8e7c4f1` | 320,7 / 314,0 | 18,4 | 34,5 | 11,1 | 28,0 | 6,6 |
+| nur Build-Patch | 318,4 / 314,7 | 17,2 | 34,8 | 11,0 | 28,1 | 6,7 |
+| nur Vorwärts-Patch | 320,7 / 315,9 | 18,6 | 33,3 | 11,5 | 27,1 | 7,5 |
+| beide | **317,8 / 312,0** | 17,2 | 33,3 | 11,5 | 27,1 | 7,6 |
+
+Also: Build −1,2 ms, Forward −1,2 ms, Gradient +0,4 ms, zusammen −2,9 ms im Median. Meine Schätzung war 3 bis 5 ms.
+
+**Warum die Gradient-Phase langsamer wird** (in Docker nachgemessen, Seitenfehler des ersten Rückwärts-Aufrufs): 1'452 vorher, 2'044 nachher. Der Vorwärtslauf legt seit dem Patch 4,8 MB weniger Zwischenfelder an und gibt sie darum auch nicht mehr frei. Der Rückwärtslauf hatte genau diesen freigegebenen Speicher wiederverwendet und muss jetzt 2,4 MB frisch anfassen. Der Rückwärts-Callback selbst rechnet gleich schnell (M4: 1,68 ms vorher und nachher). Eine billige Abhilfe habe ich nicht gefunden: Die drei Felder (m, F) in `_signal_adjoint` lassen sich nicht an Ort und Stelle wiederverwenden, ohne die Ergebnisse im Zwischenspeicher zu verändern, die ein zweiter Pullback noch braucht. In kleinen Zeilenblöcken zu rechnen spart höchstens 300 Seitenfehler (rund 0,2 ms auf dem Xeon). Nicht gebaut.
+
+**Zur Einordnung, aus Philips Auftrag `konkurrenz-2050` (20:01 UTC, nicht von uns gemessen):** das öffentliche Repo eines anderen Teams (`Kartikdangi1/vibevoxels-starthack`, drei Branches) auf demselben Xeon mit demselben `benchmark.py`: 1'071 bis 1'246 ms im Erstlauf gegen 313,8 ms für `philip-fastest`. Deren Imports 295 ms (unsere 187), Kompilieren 390 (35), Forward 157 (34), Gradient 77 bis 94 (11). Das ist ein Stand von 20:13 und sagt nichts über Teams, die nicht öffentlich arbeiten.
 
 **Runde 17 (21.11., 21:43 bis 21:48): kein neuer Patch.** `philip-fastest` und `main` stehen unverändert auf `8e7c4f1`, die beiden Patches sind dort noch nicht angewendet. Gearbeitet auf `8e7c4f1` plus beiden Patches.
 
@@ -685,13 +702,13 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 
 | Branch | Zuletzt gesehen | Stand in `noel` |
 | --- | --- | --- |
-| `origin/philip` | `8435944` (21.11. 15:28), unverändert am 21.11. 18:36. Neu seit `ab82e42`: `b3676de`, `5934330` und `8435944` (nur die Ergebnisdateien der drei VM-Messreihen, kein Code) | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
+| `origin/philip` | `3983044` (21.11. 21:59): Ergebnisdateien der VM-Aufträge `konkurrenz-2050`, `main-2122` und `patches-2145`. Davor `8435944` (21.11. 15:28). Neu seit `ab82e42`: `b3676de`, `5934330` und `8435944` (nur die Ergebnisdateien der drei VM-Messreihen, kein Code) | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
 | `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), unverändert am 21.11. 18:36. Neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), am 21.11. 15:06 auf dem Server gelöscht (der Commit steckt in `origin/max/lu-once`) | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
 | `origin/Joel` | `9f79a5f` (21.11. 17:53), neu seit `76e799f`: nur das README (Verweis auf das neue Tag `joels-fastest` = `ac7aedc`). Baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
 | `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 18:36 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
-| `origin/main` | `8e7c4f1` (seit 21.11. 21:18 gleich `philip-fastest`, also mit Balanced Homodyne). Vorher `50341f9` (17:30), davor das unveränderte Kit `5eece1d` | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Das unveränderte Kit ist weiter `5eece1d` |
-| `origin/philip-fastest` | `8e7c4f1` (21.11. 20:37, seit `11e96b4` nur ein Testskript), unverändert am 21.11. 21:43. `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
+| `origin/main` | `9a31fa1` (seit 21.11. 21:49, gleich `philip-fastest`, also mit Balanced Homodyne und beiden Patches). Vorher `50341f9` (17:30), davor das unveränderte Kit `5eece1d` | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Das unveränderte Kit ist weiter `5eece1d` |
+| `origin/philip-fastest` | `9a31fa1` (21.11. 21:49): `8e7c4f1` plus die beiden Patches aus `runs/noel/patches/` (`13bd58d`, `9a31fa1`). `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
 
