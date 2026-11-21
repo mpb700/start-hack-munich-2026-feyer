@@ -1008,16 +1008,15 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
     return carrier, signal, noise, Y, MU
 
 
-def _signal_adjoint(plan, weights, Y, signal_bar, general_adjoint):
-    """lam_f = S_f^-T signal_bar_f for every frequency, shape (F, m).
+def _adjoint_factors(plan, weights, signal_bar):
+    """alpha (F,) if signal_bar_f = alpha_f conj(w) at every frequency, otherwise None.
 
-    `weights` are the detector weights w, and Y_f = S_f^-H w comes from the forward pass. A readout
-    that divides the noise by the signal of the same detector (the sensitivity) gives a cotangent
-    signal_bar_f = alpha_f conj(w), because signal and noise are read through the same weights.
-    Then lam_f = alpha_f conj(Y_f). This is checked on the numbers: the cotangent has to live on
-    the detector rows, and what the projection onto conj(w) leaves has to be rounding noise.
-
-    Any other cotangent needs the complete signal systems again: `general_adjoint(signal_bar)`.
+    `weights` are the detector weights w. A readout that divides the noise by the signal of the
+    same detector (the sensitivity) gives such a cotangent, because signal and noise are read
+    through the same weights. The signal adjoint is then lam_f = S_f^-T signal_bar_f =
+    alpha_f conj(Y_f), with Y_f = S_f^-H w from the forward pass. This is checked on the numbers:
+    the cotangent has to live on the detector rows, and what the projection onto conj(w) leaves
+    has to be rounding noise.
     """
     d = plan.detector
     support = np.nonzero(np.any(signal_bar != 0, axis=0))[0]
@@ -1027,8 +1026,8 @@ def _signal_adjoint(plan, weights, Y, signal_bar, general_adjoint):
         alpha = cotangent @ weights[d] / size
         rest = np.abs(cotangent - alpha[:, None] * direction).sum(axis=1)
         if np.all(rest <= ADJOINT_TOLERANCE * np.abs(cotangent).sum(axis=1)):
-            return alpha[:, None] * np.conj(Y)
-    return general_adjoint(signal_bar)
+            return alpha
+    return None
 
 
 def backward(
@@ -1049,13 +1048,20 @@ def backward(
 
     `plan` only has to contain the parameter-dependent entries (`SystemPlan(..., signal_base=False,
     noise_base=False)`): constant matrix entries receive no cotangent. `X` is the signal (F, m).
+
+    The cotangent of a signal matrix entry (row, column) is -lam[row] X[column] -
+    2 g conj(Y[row]) MU[column], with the signal adjoint lam. For the usual readout lam is
+    alpha conj(Y) (`_adjoint_factors`), and the entry needs one product:
+    -conj(Y[row]) (alpha X + 2 g MU)[column]. Any other cotangent of the signal needs the
+    complete signal systems again: `general_adjoint(signal_bar)`.
     """
     n, m = plan.n, plan.m
     carrier_lu, _ = plan.carrier_matrix(carrier_entries)
     F = signal_entries.shape[0]
     carrier_bar = carrier_bar.astype(complex)
     g = noise_bar * NOISE_SCALE / noise  # d noise / d power
-    lam = _signal_adjoint(plan, plan.detector_weights(carrier), Y, signal_bar, general_adjoint)
+    alpha = _adjoint_factors(plan, plan.detector_weights(carrier), signal_bar)
+    lam = general_adjoint(signal_bar) if alpha is None else None
     in_matrix, off_matrix = np.nonzero(plan.in_matrix)[0], np.nonzero(~plan.in_matrix)[0]
     rows, cols = plan.rows[in_matrix], plan.cols[in_matrix]
     conjugated = np.nonzero(plan.conjugated)[0]
@@ -1073,20 +1079,28 @@ def backward(
     # Frequency blocks keep the intermediate arrays small, as in `forward`.
     for start in range(0, F, BLOCK_FREQUENCIES):
         block = slice(start, start + BLOCK_FREQUENCIES)
-        lam_b, Y_b, g_b = lam[block], Y[block], g[block, None]
-        count = lam_b.shape[0]
-        # -lam X - 2 g conj(Y) MU on the matrix pattern, evaluated in place.
-        first = lam_b[:, rows]
-        first *= X[block][:, cols]
-        np.negative(first, out=first)
-        second = Y_b[:, rows]
-        np.conj(second, out=second)
-        second *= 2 * g_b
-        second *= MU[block][:, cols]
-        first -= second
+        Y_b, g_b = Y[block], g[block, None]
+        count = Y_b.shape[0]
         V_bar = np.empty((count, plan.size), complex)
+        first = Y_b[:, rows]
+        np.conj(first, out=first)
+        if lam is None:  # -conj(Y) (alpha X + 2 g MU) on the matrix pattern, evaluated in place
+            alpha_b = alpha[block, None]
+            combined = alpha_b * X[block]
+            combined += (2 * g_b) * MU[block]
+            first *= combined[:, cols]
+            np.negative(first, out=first)
+            V_bar[:, off_matrix] = alpha_b * np.conj(Y_b[:, plan.rhs_rows])
+        else:  # -lam X - 2 g conj(Y) MU
+            lam_b = lam[block]
+            first *= 2 * g_b
+            first *= MU[block][:, cols]
+            second = lam_b[:, rows]
+            second *= X[block][:, cols]
+            first += second
+            np.negative(first, out=first)
+            V_bar[:, off_matrix] = lam_b[:, plan.rhs_rows]
         V_bar[:, in_matrix] = first
-        V_bar[:, off_matrix] = lam_b[:, plan.rhs_rows]
 
         N_bar = g_b * np.conj(Y_b[:, plan.noise_rows]) * Y_b[:, plan.noise_cols]
         noise_entries_bar[block][:, noise_live] = N_bar[:, plan.noise_base.size :]
