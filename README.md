@@ -3,7 +3,7 @@
 > Schnellüberblick fürs Team + KI-Agenten. Fakten zuerst, Erklärung unten.
 
 ## TL;DR (die harten Fakten)
-- **Submission:** Commit `ac7aedc` · Tag `s-group-d-det-superlu` · Branch `Joel`.
+- **Submission:** Commit `ac7aedc` · Tag `s-group-d-det-superlu` · **Alias `joels-fastest`** · Branch `Joel`.
 - **Laufzeit = 0,762 s warm / 0,995 s kalt** (AMD EPYC-Turin, 1 CPU, Kern 14, `--cpus 1`, 10 reps).
 - **Baseline → Submission: 33,5 s → 0,76 s = −97,7 % (~44×)** auf identischer Hardware.
 - Jury (Intel Xeon 8468) ≈ **3,2 s statt 44,2 s**; ~2,6 s davon ist der Pflicht-`import jax`, den **jedes** Team zahlt.
