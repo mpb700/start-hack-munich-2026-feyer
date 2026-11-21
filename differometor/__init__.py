@@ -8,7 +8,16 @@ exposed through a module-level ``__getattr__`` (PEP 562) and only imported on
 first use.  ``from differometor import visualize_setup`` keeps working.
 """
 
-from differometor.setups import Setup
+import os as _os
+
+# SX experiment (Feyer-gated, preparation only, NOT for submission).
+# Lower the XLA backend optimisation level; must be set before the backend is
+# initialised (benchmark.py imports differometor before initialize()/jax.devices()).
+_sx_flags = _os.environ.get("XLA_FLAGS", "")
+if "xla_backend_optimization_level" not in _sx_flags:
+    _os.environ["XLA_FLAGS"] = (_sx_flags + " --xla_backend_optimization_level=1").strip()
+
+from differometor.setups import Setup  # noqa: E402
 from differometor.simulate import run, run_build_step, run_simulation_step, simulate
 from differometor.components import power_detector, signal_detector
 
