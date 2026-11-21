@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, nach der siebten Runde (Commit `e311d5c`). Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, nach der achten Runde (Commit `b6b1119`). Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 ## Messwerte
 
@@ -62,7 +62,42 @@ Runde 7 gegen Runde 6 (`d0e0fa8` → `e311d5c`), je 16 Läufe im Wechsel, Median
 
 Die Änderung betrifft nur den Build. Forward, Gradient und Warm sind innerhalb der Streuung gleich. Auf dem Mac verschwindet der Gewinn von gut 2 ms in der Streuung der Import-Phase (±3 ms).
 
-Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen den Stand `e311d5c`, erzeugt am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+Runde 8 gegen Runde 7 (`57e20fe` → `b6b1119`), je 16 Läufe im Wechsel, Median. Der Rechner war am Nachmittag rund 3 % langsamer als am Vormittag (Imports 317 bis 324 statt 304 bis 312 ms), darum sind die absoluten Werte höher:
+
+| Umgebung | Erstlauf gesamt | Erstlauf ohne Imports | Forward: Lowering + Kompilation | Forward | Gradient (Lauf) | Warm |
+| --- | --- | --- | --- | --- | --- | --- |
+| Mac | 454,6 → **453,0 ms** | 131,5 → 130,5 ms | 7,7 → 6,8 ms | 24,4 → 24,0 ms | 9,8 → 9,7 ms | 30,8 → 30,4 ms |
+| Docker `--cpus 1` | 520,6 → **516,2 ms** | 204,7 → 201,4 ms | 8,2 → 6,5 ms | 30,3 → 30,2 ms | 13,1 → 12,5 ms | 37,1 → 37,4 ms |
+
+Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## Was in Runde 8 geändert wurde
+
+Noel am 21.11. um 13:14: «Optimiere jetzt wirklich nochmals alles was geht, werde kreativ». Eine Änderung ist geblieben, alles andere ist gemessen und verworfen (Tabelle darunter).
+
+| Nr. | Änderung | Datei | Gewinn im Wechselvergleich |
+| --- | --- | --- | --- |
+| 21 | Index-Arrays sind statisch. Der Build liefert seine ganzzahligen Index-Arrays als `differometor.fast.StaticArray`: schreibgeschützte NumPy-Arrays, die für JAX ein Pytree-Knoten ohne Blätter sind. JAX verfolgt sie nicht, sie sind Konstanten der kompilierten Programme, und die Host-Callbacks bekommen sie über den Callback selbst statt als Argumente. Andere Index-Arrays ergeben eine neue Kompilation (Vergleich nach Inhalt). Die sieben übrigen Float-Arrays reisen als ein gepacktes Residuum. Das Forward-Programm hat 8 statt 36 Eingabe-Arrays, sein Callback 8 statt 29 Argumente | `fast.py`, `build.py`, `_simulate_dicht.py` | Erstlauf ohne Imports: Docker 204,7 → 201,4 ms, Mac 131,5 → 130,5 ms. Forward-Lowering und -Kompilation: Docker 8,2 → 6,5 ms, Mac 7,7 → 6,8 ms |
+
+Zu Nr. 21:
+
+- Benchmark-Ausgaben bitgleich, Build-Arrays von 27 Setups identisch (`test_build.py --compare`), alle Prüfskripte mit denselben Zahlen.
+- Wer `simulate` gewöhnliche Integer-Arrays übergibt, landet weiter im schnellen Weg: Sie werden dann verfolgt und gepackt wie vorher. `test_pack.py` prüft beide Wege gegeneinander (identischer Loss und Gradient) und ein verändertes Index-Array gegen das Original-JAX (2,3e-12).
+- Der JAX-Weg (`simulate_jax`) macht aus statischen Arrays am Eingang gewöhnliche JAX-Arrays. Dort sind sie jetzt Konstanten des Programms. Für zwei Setups mit gleichen Formen, aber anderen Indizes wird darum neu kompiliert.
+- Die Sensitivity-Lowering-Phase wurde um 0,2 bis 0,5 ms langsamer. Erklärung, nicht bewiesen: Einmalige Vorarbeit von JAX für Integer-Argumente fällt jetzt dort an statt im Forward-Programm. Im Gewinn oben ist das enthalten.
+- Zurücknehmen: `git revert b6b1119`.
+
+In Runde 8 gemessen und nicht übernommen:
+
+| Versuch | Ergebnis |
+| --- | --- |
+| Residuum `Y` weglassen und im Rückwärtslauf aus `Z` berechnen (bitgleich) | Mac: Forward −0,5 ms, Gradient +0,35 ms. Docker: Forward −0,8 ms, Gradient +0,4 ms. Netto innerhalb der Streuung. Zurückgenommen |
+| Blockfolge der Zerlegung mit grösserem erstem Block (26 + 5×15, 21 + 5×16), Faktoren vor dem nächsten Block freigeben | Seitenfehler der Zerlegung im ersten Aufruf 3'060 → 2'390 bis 2'740, aber kein Zeitgewinn (Forward 28,2 bis 29,5 gegen 29,0 bis 29,6 ms, Einzelläufe). Warm teils schlechter |
+| glibc-Schwellen mit einer sofort wieder freigegebenen 31-MB-Anforderung anheben (nur Versuch, Regelfrage B6) | Erstlauf ohne klaren Gewinn. Warm im besten Fall 23,6 ms Forward und 9,6 ms Gradient ohne Seitenfehler |
+| Vorab-Elimination: 345 der 751 Unbekannten für alle Frequenzen in NumPy herausrechnen, SuperLU zerlegt nur 406 (Prototyp, Mac) | Zerlegung 9,3 → 7,1 ms inklusive Aufbau des reduzierten Systems (1,0 ms), Faktoreinträge 6'118 → 4'388. Aber jede Lösung mit Rücksubstitution 5,7 statt 3,4 ms. Insgesamt 2,4 ms langsamer. Abweichung der Lösungen 3e-10 |
+| Detektoren in XLA statt als Host-Callback (Docker, Summe aus Sensitivity und Gradient im Erstlauf) | Heute 129 bis 141 ms. `power_detector` mit der billigsten Formel in XLA: 137 bis 163 ms. `signal_detector` in XLA: 200 ms. Beide: 209 ms |
+| Kommentare und Docstrings aus den Quelltexten entfernen, nie aufgerufene Funktionen auslagern | Übersetzen aller Module auf dem Mac 9,1 → 8,5 ms. Funktionen, die der Benchmark nie aufruft, machen zusammen 0,9 ms aus. Lohnt nicht |
+| Speicherbereinigung (Garbage Collector) im Build abschalten | Im Build fallen nur 0,12 ms an (siehe Erkenntnisse) |
 
 ## x86-64, emuliert (21.11., 13:04, Stand `cb902d7`, auf Noels Wunsch)
 
@@ -182,22 +217,37 @@ Zu Nr. 9: Die Skalierung macht den Löser auch genauer. Bei zufällig verändert
 | 6 | Schnellerer Aufbau des Matrix-Musters (Schlüssel + `searchsorted` statt dichter Masken) | `fast.py`, `SystemPlan` | 3,6 → 1,8 ms je Aufruf |
 | 7 | Plotly erst bei Bedarf laden (Max' Fassung) | `__init__.py` | Import `differometor` 107 → 15 ms (zusammen mit Nr. 1) |
 
-## Wo die restliche Zeit steckt (Docker, Stand Runde 3, Build Runde 7, Forward und Gradient Runde 6)
+## Wo die restliche Zeit steckt (Docker, Stand Runde 3, Build Runde 7, Forward und Gradient Runde 8)
 
 | Phase | ms | Unser Anteil |
 | --- | ---: | --- |
 | Imports | 309 | 13 ms für `import differometor`, fast alles Übersetzen der Quelltexte, weil das Image keine `__pycache__`-Ordner hat: `fast.py` 4,8, `build.py` 4,4, `components.py` 2,0, `setups.py` 0,9, `simulate.py` 0,6. Mit Cache: 1,4 ms |
 | Initialisierung, Laden | 3 | nichts |
 | Build | 23 | 5,9 ms (`run_build_step`, vor Runde 7 waren es 8,5 ms). Der Rest gehört zu `benchmark.py`: Der erste `jnp.asarray`-Aufruf startet das JAX-Backend (ca. 9 ms), und jede neue Form in `jnp.asarray(liste, dtype=...)` kompiliert ein kleines XLA-Programm (je rund 3,5 ms, dreimal) |
-| Forward: Lowering, Kompilation | 7,5 | alles, aber fast nur JAX-Grundaufwand (31 Argumente) |
+| Forward: Lowering, Kompilation | 6,5 | alles, aber fast nur JAX-Grundaufwand: In `df.simulate` selbst vergehen beim Tracing 0,6 ms. Ein Programm ganz ohne Rechenoperationen kostet rund 3 ms Kompilation |
 | Forward | 29,5 | alles. Callback im Erstlauf 26,8 bis 27,4 ms (Aufteilung aus Runde 3: Zerlegung 11, Lösen 4,6, Schleife in `forward` 3,6, Einträge 2,1, Plan 1,4, Matrixwerte 1,2). Ausserhalb des Callbacks ca. 2 ms: JAX kopiert 6 MB Ergebnisse heraus. Vor Runde 6 waren es 5 bis 6 ms, weil 19 MB Argumente hineinkopiert wurden |
-| Sensitivity: Lowering | 11 | ca. 2 ms (zwei Callbacks). Der Rest ist das Tracing des Readouts |
+| Sensitivity: Lowering | 11 | 0,4 ms in unseren zwei Detektor-Funktionen selbst, dazu ihr Anteil an JAX' Ableitungs-Maschinerie (zusammen geschätzt 2 bis 3 ms). Der Rest ist das Tracing des Readouts |
 | Sensitivity: Kompilation | 66 | nichts. Das ist der Readout aus `benchmark.py` in XLA |
 | Gradient: Lowering | 5 | wenig |
 | Gradient: Kompilation | 36 | nichts |
 | Gradient | 12,3 | fast alles. Callback im Erstlauf 10,3 bis 10,6 ms: Funktionen mit Ableitung, Schleife in `backward`, Rückrechnung auf die Parameter. Ausserhalb ca. 2 ms Übergabe (12 Argumente, darunter rund 7 MB Residuen und Kotangenten) |
 
 Rund 430 von 505 ms sind fix, solange `benchmark.py` unverändert bleibt und keine JAX-Schalter gesetzt werden dürfen.
+
+## Erkenntnisse aus Runde 8 (alle gemessen, Docker wenn nicht anders vermerkt)
+
+| Thema | Befund |
+| --- | --- |
+| Threads | Seit Runde 6 laufen alle Host-Callbacks im Haupt-Thread, auch der Forward-Callback |
+| Erster gegen warmer Forward-Aufruf | 28 bis 29,7 ms gegen 24 bis 26 ms. Der Unterschied sind Seitenfehler: 6'900 bis 7'700 im ersten Aufruf, 1'300 bis 1'700 danach |
+| Seitenfehler im ersten Forward-Callback | Zerlegung 3'060 bis 3'150 (pro Block 997, 711, 453, 430, 298, 173, 2), übrige Arbeit in `forward` 1'150, Matrixeinträge 500 bis 1'015, `signal_values` 410 bis 450, Lösen 80 |
+| Warum die Zerlegung so viele Seitenfehler hat | SuperLU reserviert für die Faktoren das 20-Fache der Matrixeinträge: für einen Block von 16 Frequenzen zweimal 17,4 MB und einmal 4,4 MB, wovon rund 1,5 MB benutzt werden. glibc holt so grosse Blöcke frisch vom System und gibt sie nach jedem Block zurück. Die Reserve lässt sich über SciPy nicht einstellen |
+| Tracing unserer Funktionen | Forward-Lowering 3,2 ms, davon in `df.simulate` 0,62 ms. Sensitivity-Lowering 10,7 ms, davon in `signal_detector` 0,25 ms und in `power_detector` 0,15 ms. Ein `jax.vjp` nur um `signal_detector` braucht 2,7 ms Lowering, um `power_detector` 1,9 ms, um den Rest des Readouts 5,7 ms (je inklusive Grundaufwand pro Programm) |
+| XLA-Operationen sind teuer | Selbst `real² + imag²` auf 286 Werten kostet als XLA-Operation 4 bis 6 ms Kompilation und 2,4 ms Lowering mehr als der Host-Callback |
+| Speicherbereinigung von Python | Ein Benchmark-Lauf löst 182 Sammelläufe aus, zusammen 19,7 ms. Davon fallen 15,7 ms während `import jax` an, also bevor unser Paket geladen wird, und nur 1,6 ms zwischen dem Import von `differometor` und dem Ende des Erstlaufs (Build 0,12 ms, Sensitivity-Lowering 0,55 ms). Gesammelt wird dabei fast nichts (rund 500 Objekte). Mit ab Prozessstart abgeschalteter Bereinigung (nur Versuch, über ein Startskript um `benchmark.py`) liegt der Erstlauf bei 478 bis 491 statt 500 bis 511 ms. Aus `differometor/` heraus ist das nicht erreichbar |
+| JAX-Schalter, neu gemessen | `jax_disable_most_optimizations` auf dem Stand `e311d5c`, 8 Läufe im Wechsel: Erstlauf 515,8 → 475,4 ms (Sensitivity-Kompilation 68,1 → 40,9 ms, Gradient-Kompilation 39,3 → 23,5 ms). Fehler gegen die Referenz unverändert, Gradient-Norm gleich bis zur 13. Stelle. Weiterhin Regelfrage B6 |
+| Index-Arrays an JAX vorbei (Obergrenze vor dem Bau von Nr. 21) | Mit einem prozessweiten Wörterbuch als Wegwerf-Versuch: Forward-Lowering −0,5 ms, Forward-Kompilation −0,7 ms, Gradient −0,2 ms, warm −0,9 ms |
+| Deckel zu | Von 13:24 bis 13:58 war der Laptop zugeklappt. Messungen aus dieser Zeit sind unbrauchbar (Kompilationszeiten doppelt so hoch) und nicht verwendet |
 
 ## Erkenntnisse aus Runde 7 (alle gemessen)
 
@@ -280,7 +330,7 @@ source .venv/bin/activate
 # Vorher differometor/__pycache__ in allen Ständen löschen (siehe Runde 7), sonst bricht ab.py ab.
 python runs/noel/ab.py 12 vorher=runs/noel/vergleich neu=.
 # Wechselvergleich in Docker (Linux, --cpus 1), beliebig viele Images
-docker build -q -t differometor-bench:neu . && python runs/noel/ab_docker.py 10 vorher=differometor-bench:runde7 neu=differometor-bench:neu
+docker build -q -t differometor-bench:neu . && python runs/noel/ab_docker.py 10 vorher=differometor-bench:runde8 neu=differometor-bench:neu
 # Profil der Host-Callbacks, lokal oder im Image
 source runs/env.sh && python runs/noel/profil.py . forward
 docker run --rm --cpuset-cpus 0 --entrypoint python differometor-bench:neu /app/runs/noel/profil.py /app backward
@@ -288,7 +338,7 @@ docker run --rm --cpuset-cpus 0 --entrypoint python differometor-bench:neu /app/
 
 Einzelne Läufe streuen um bis zu 40 ms. Darum immer abwechselnd messen und Median und Minimum ansehen. Für kleine Änderungen die Phasen einzeln vergleichen: Die Berichte der Wechselvergleiche liegen in `runs/noel/out/` (`ab-<Name>-<Nr>.json`) und `runs/noel/out/docker/`. Der erste Lauf eines frisch gebauten Images ist ein Ausreisser (562 statt 520 ms) und zählt nicht.
 
-Vorhandene Docker-Images: `differometor-bench:base` (Philip + Max), `:vorher` (`c261b63`), `:kandidat3` (`49d386b`), `:runde3` (`1442ef3`), `:runde4` (`ba8f1f2`), `:runde5` (`45a2328`), `:runde6` (`7d12ba7`), `:runde7` (`e311d5c`), `:x86` (`cb902d7`, linux/amd64, emuliert), `:joel` (`76e799f`).
+Vorhandene Docker-Images: `differometor-bench:base` (Philip + Max), `:vorher` (`c261b63`), `:kandidat3` (`49d386b`), `:runde3` (`1442ef3`), `:runde4` (`ba8f1f2`), `:runde5` (`45a2328`), `:runde6` (`7d12ba7`), `:runde7` (`e311d5c`), `:runde8` (`b6b1119`), `:x86` (`cb902d7`, linux/amd64, emuliert), `:joel` (`76e799f`).
 
 ## Korrektheit prüfen (nach jeder Änderung)
 
@@ -299,7 +349,7 @@ python runs/check_setups.py
 python runs/noel/test_detectors.py .
 python runs/noel/test_adjoint.py .      # allgemeiner Rückwärtslauf, Blockgrösse, Residuen-Grenze
 python runs/noel/test_perturbed.py .    # veränderte Designvariablen gegen das Original-JAX
-python runs/noel/test_pack.py .         # gepackte Residuen: exakte Wiederherstellung
+python runs/noel/test_pack.py .         # gepackte Residuen und statische Index-Arrays
 python runs/noel/test_sparse.py .       # Sparse-Matrizen: Form, dichte Eingaben, von Hand veränderte Matrizen
 python runs/noel/test_build.py .        # Seitenband-Erweiterung im Build gegen eine Referenz
 ```
@@ -317,7 +367,7 @@ python runs/noel/test_build.py . --compare alt.npz neu.npz   # 946 arrays compar
 python benchmark.py --repeats 3 --output orig.json --save-arrays orig.npz
 ```
 
-Sollwerte (Stand `e311d5c`, auf Noels M4, unverändert seit Runde 2):
+Sollwerte (Stand `b6b1119`, auf Noels M4, unverändert seit Runde 2):
 
 | Grösse | Abweichung gegen das Original-JAX (max, relativ zum Maximum) |
 | --- | ---: |
@@ -335,7 +385,7 @@ Sollwerte (Stand `e311d5c`, auf Noels M4, unverändert seit Runde 2):
 | `test_detectors.py` | WORST 2,9e-14 |
 | `test_adjoint.py` | WORST 4,0e-08, Blockgrössen 1 und 2 gegen 16: Abweichung 0. Die Prüfung der Residuen-Grenze läuft nur noch bei Ständen vor Runde 6 |
 | `test_perturbed.py` | WORST 2,1e-08 |
-| `test_pack.py` | zweimal «28 arrays restored exactly», dann «OK» |
+| `test_pack.py` | «7 arrays restored exactly», zweimal «28 arrays», «23 static index arrays, 7 leaves for JAX», «identical loss and gradient», veränderter Index gegen JAX 2,3e-12, dann «OK» |
 | `test_build.py` | «20000 random cases identical to the reference», dann «OK» |
 | `test_sparse.py` | dichte Eingaben: Abweichung 0. Veränderte Matrizen, Fast-Path gegen JAX: Carrier 9,7e-12, Signal 1,3e-08, Noise 1,8e-08, Gradient 5,3e-08. Am Ende «OK» |
 
@@ -357,10 +407,12 @@ Sollwerte (Stand `e311d5c`, auf Noels M4, unverändert seit Runde 2):
 
 | Nr. | Idee | Schätzung | Haken |
 | --- | --- | --- | --- |
-| 1 | Index-Arrays als feste Struktur statt als Daten: Die rund 20 ganzzahligen Arrays im `arrays`-Dict ändern sich für ein Setup nie. Als Pytree-Knoten ohne Blätter wären sie keine Programm-Argumente mehr, und die Callbacks bekämen sie ohne Kopie | geschätzt 1,5 bis 2 ms in Docker (Lowering und Kompilation pro Argument rund 35 µs, Kopie pro Argument und Aufruf rund 11 µs, kein Packen mehr), nicht gemessen | Grösserer Eingriff in die Schnittstelle als Nr. 19: Rund 20 Werte im Dict wären keine Arrays mehr. Der JAX-Weg müsste sie als Konstanten einbetten. Vorher im Wegwerf-Versuch messen |
-| 2 | Residuum `Y` weglassen: Mit der Detektor-Basis ist `Y = conj(Z · conj(w))`, der Rückwärtslauf kann es aus `Z` berechnen | geschätzt 0,3 ms in Docker (2,4 MB weniger Kopien, dafür eine Rechnung über 1,2 MB), auf dem Mac nichts | Unter der Messgrenze. Nur zusammen mit anderem sinnvoll |
+| 1 | Ergebnisse `MU` und `Z` in der Reihenfolge der Elimination lassen statt pro Block umzusortieren. Der Rückwärtslauf greift dann mit umgerechneten Indizes zu | geschätzt 0,4 ms im Forward | Die Reihenfolge müsste als weiteres Residuum mit. Unter der Messgrenze, wie der Versuch mit `Y` gezeigt hat |
+| 2 | `EntryPlan` nur einmal bauen: Er hängt nur von statischen Index-Arrays ab und könnte beim Tracing entstehen und beiden Callbacks mitgegeben werden | geschätzt 0,3 ms | Die Callbacks hielten dann ein gemeinsames Objekt. Es dürfte nach dem Bau nicht mehr verändert werden |
 | 3 | `build.py` weiter straffen: Aufrufstellen von `set_instructions` (rund 2'400 `np.array`-Aufrufe), Schleife über Bauteile | geschätzt 0,5 bis 1 ms. Der grössere Teil (2,5 bis 3 ms) ist seit Runde 7 erledigt | Jede Aufrufstelle einzeln anfassen. Prüfbar mit `test_build.py --dump` und `--compare` |
-| 4 | Falls Feyer Einstellungen im Code erlaubt (B6): eine Zeile `jax.config.update("jax_disable_most_optimizations", True)` in `differometor/__init__.py`, dazu feste glibc-Schwellen über `mallopt` | gemessen: 42 ms in Docker und 13 ms auf dem Mac für den JAX-Schalter. Die rund 3,5 ms für die glibc-Schwellen stammen aus Runde 4 und sind nach Runde 6 neu zu messen | Nur nach Zusage von Feyer |
+| 4 | Falls Feyer oder Noel Einstellungen im Code freigibt (B6): eine Zeile `jax.config.update("jax_disable_most_optimizations", True)` in `differometor/__init__.py` | gemessen in Runde 8: 40,4 ms in Docker (515,8 → 475,4 ms). Auf dem Mac 13 ms (Runde 3). Angehobene glibc-Schwellen bringen im Erstlauf nichts Verlässliches (Runde 8) | Nur nach ausdrücklicher Zusage |
+| 4b | Speicherbereinigung von Python vor `import jax` abschalten | gemessen: rund 20 ms (478 bis 491 statt 500 bis 511 ms) | Geht nur ausserhalb von `differometor/` (Startskript, Umgebung oder `benchmark.py`). Das ist Feyers Entscheid, nicht unserer |
+| 4c | Zwischenergebnisse des Forward-Laufs im Prozess behalten statt als Residuen durch JAX zu schicken (LU-Faktoren, Pläne) | geschätzt 3 ms in Docker, nicht gemessen | Widerspricht der Abmachung «keine Caches». Bräuchte Noels Ja und einen zustandslosen Rückfall |
 | 5 | `noel` auf Joels x86-Maschine messen (AMD EPYC, `taskset -c 14 python benchmark.py --cpus 1`), im Wechsel mit `6b67cfd` (Stand vor Runde 5). Die Bündelung aus Runde 5 lässt sich nach Runde 6 nicht mehr einzeln zurücknehmen. Sie ist jetzt Teil des Entwurfs, und ihr Nachteil im Warmlauf ist weg | – | Joel fragen |
 | 6 | Falls ohne `__pycache__` gewertet wird (Frage B4): Code, den der Benchmark nie ausführt, in Module auslagern, die erst bei Bedarf geladen werden (Teile von `build.py` und `components.py`) | unbekannt, höchstens einige der 13 ms | Mit `__pycache__` bringt es nichts. Erst nach Feyers Antwort |
 
@@ -370,11 +422,11 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 
 | Branch | Zuletzt gesehen | Stand in `noel` |
 | --- | --- | --- |
-| `origin/philip` | `ab82e42` (20.11. 19:58), unverändert am 21.11. 12:46 | vollständig enthalten |
+| `origin/philip` | `ab82e42` (20.11. 19:58), unverändert am 21.11. 13:14 | vollständig enthalten |
 | `origin/max/lu-once` | `79ae580` (20.11. 20:08), unverändert | vollständig enthalten |
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), neu in Runde 3 | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
-| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 12:46, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
-| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 12:46 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
+| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 13:14, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
+| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 13:14 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `5eece1d` | unverändertes Kit |
 
 Joels Stand gegen `noel` auf Noels Rechner (je 10 Läufe im Wechsel, Median):
@@ -393,6 +445,7 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - Nur der Branch `noel`. Kein Merge von `noel` in andere Branches, kein Pull Request, kein Force-Push, keine anderen Branches anfassen.
 - Noel hat am 21.11. um 08:30 entschieden: Die Bündelung der kleinen Arrays (Nr. 18) wird eingebaut, obwohl die warmen Wiederholungen in Docker damit langsamer sind. Für die Wertung zählt der Erstlauf.
 - Seit Runde 6 (21.11., `7d12ba7`) liefert `run_build_step` die drei Systemmatrizen als `SparseMatrix`. Wer Branches zusammenführt, die den Build oder den JAX-Weg ändern, muss das beachten. Die Runde hat das im Rahmen der Freigabe für behaltene Änderungen eingebaut. Noel hat am 21.11. um 10:10 bestätigt: bleibt drin.
+- Seit Runde 8 (21.11., `b6b1119`) sind die Index-Arrays aus `run_build_step` `StaticArray`s. Gebaut im Rahmen von Noels Auftrag vom 21.11. um 13:14 («alles was geht, werde kreativ»).
 - Verworfene Versuche werden nicht committet.
 - Eine Änderung bleibt nur, wenn sie im Wechselvergleich schneller ist und alle Prüfungen unverändert gut ausfallen.
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.

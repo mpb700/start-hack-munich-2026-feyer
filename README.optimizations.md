@@ -200,6 +200,25 @@ Eine Änderung: Der Build-Schritt (`run_build_step`) ist schlanker, bei identisc
 - **Einordnung:** `run_build_step` allein braucht im Docker-Ablauf 5,9 statt 8,5 ms. Von den 23 ms der Build-Phase gehören die übrigen rund 17 ms zu `benchmark.py` (Start des JAX-Backends, drei kleine XLA-Programme für `jnp.asarray`).
 - **Reports:** `runs/noel/mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen diesen Stand: 0,432 s auf macOS und 0,499 s in Docker, je der mittlere von fünf Läufen.
 
+## Achte Runde vom 21.11. (Branch `noel`)
+
+Eine Änderung: Die Index-Arrays eines Setups sind statisch. Der Build liefert sie als `differometor.fast.StaticArray`, das sind schreibgeschützte NumPy-Arrays, die JAX nicht verfolgt. Sie sind damit Konstanten der kompilierten Programme und müssen nicht mehr bei jedem Aufruf in die Host-Callbacks kopiert werden. Das Forward-Programm hat 8 statt 36 Eingabe-Arrays.
+
+| Umgebung | Erstlauf gesamt | Erstlauf ohne Imports | Forward: Lowering + Kompilation | Warm |
+|---|---|---|---|---|
+| Apple M4, macOS (16 Läufe im Wechsel) | 0,455 → **0,453 s** | 131,5 → 130,5 ms | 7,7 → 6,8 ms | 30,8 → 30,4 ms |
+| Docker, Linux aarch64, `--cpus 1` (16 Läufe im Wechsel) | 0,521 → **0,516 s** | 204,7 → 201,4 ms | 8,2 → 6,5 ms | 37,1 → 37,4 ms |
+
+Die absoluten Werte liegen höher als in der siebten Runde, weil der Rechner am Nachmittag rund 3 % langsamer war. Vergleichbar sind nur die zwei Spalten einer Messreihe.
+
+- **Korrektheit:** Benchmark-Ausgaben bitgleich, Build-Arrays von 27 Setups identisch, alle Prüfskripte mit denselben Zahlen. `runs/noel/test_pack.py` prüft zusätzlich, dass der schnelle Weg mit gewöhnlichen Integer-Arrays dasselbe liefert und dass ein verändertes Index-Array zu einer neuen Kompilation mit dem richtigen Ergebnis führt.
+- **Schnittstelle:** `arrays` aus `run_build_step` enthält die Index-Arrays als `StaticArray` (verhält sich wie ein NumPy-Array). Zurücknehmen: `git revert b6b1119`.
+- **Auf x86-64 geprüft:** Der Stand vor dieser Runde läuft in einem emulierten x86-64-Image und meldet `PASS` (Abweichung zu aarch64 höchstens 8e-10 relativ, alle Prüfskripte bestanden).
+
+In dieser Runde ausserdem gemessen und verworfen: ein Residuum weniger (netto null), andere Blockfolgen für die Zerlegung (kein Gewinn im Erstlauf), Vorab-Elimination der Hälfte der Unbekannten in NumPy (2,4 ms langsamer), Detektoren in XLA statt als Callback (8 bis 80 ms langsamer), schlankere Quelltexte (unter 1 ms). Die Zahlen stehen in `runs/noel/NOTIZEN.md`.
+
+Zwei Befunde ausserhalb unserer Reichweite: Der JAX-Schalter `jax_disable_most_optimizations` würde 40 ms sparen (Regelfrage an Feyer), und Pythons Speicherbereinigung kostet während `import jax` rund 16 ms, bevor unser Paket überhaupt geladen ist.
+
 ## Wo die verbleibende Zeit steckt
 
 Im First-Run (ca. 0,4 s auf macOS) steckt kaum noch Physik:
