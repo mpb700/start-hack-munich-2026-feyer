@@ -1,8 +1,8 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 16:41, nach der elften Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 19:10, nach der zwölften Runde. Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
-**Zuerst lesen:** «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
+**Zuerst lesen:** «Runde 12» gleich unten, dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
 ## Messwerte
 
@@ -90,6 +90,43 @@ Runde 11 gegen Runde 10 (`10ffc61` → `2e1cef1`), je 14 Läufe im Wechsel, Medi
 Der Gewinn von rund 0,5 ms liegt in der Gesamtzeit unter der Streuung. Sichtbar ist er in der Gradient-Phase und direkt am Rückwärts-Callback (Mac, je 40 Aufrufe, dreimal im Wechsel: 7,28 bis 7,36 → 7,00 bis 7,03 ms).
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen weiterhin den Stand `e311d5c` (für `b6b1119` nicht neu erzeugt: fünf Läufe lagen am Nachmittag bei 449,0 bis 450,4 ms auf dem Mac und 516,8 bis 529,7 ms in Docker, alle `PASS`, aber wegen des langsameren Rechners nicht mit den Vormittagswerten vergleichbar). Erzeugt wurden sie am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## Runde 12 (21.11., 18:36 bis 19:10): `main` ist jetzt Philips Stand, Patch für Balanced Homodyne
+
+**Lage:** `origin/main` steht seit 17:30 auf Philips Linie (`50341f9`: Tuning-Modul, eigene C-Zerlegung, Zwischenspeicher, Start-Massnahmen, mitgelieferter Bytecode). `origin/philip-fastest` (`efad894`, 18:26) geht noch weiter. Philips Messungen auf dem Xeon Platinum 8468: `main` 355,8 ms, `philip-fastest` 315,3 ms im Erstlauf (Auftrag `neu-1804`). `noel` lag dort bei 726 ms (Stand Runde 8). Die Abgabe wird also aus dieser Linie kommen, nicht aus `noel`.
+
+**Das Problem dort:** `fast.supports` schliesst in beiden Branches weiter Balanced Homodyne und verknüpfte Parameter aus. Philip hat es in `runs/philip/NOTIZEN.md` selbst als offen vermerkt: Ein Homodyne-Setup braucht auf dem Xeon 35,5 s (Auftrag `stand-1642`). Der Zufallsgenerator, aus dem das Fixture stammt, wählt Homodyne in der Hälfte der Fälle (siehe Runde 9).
+
+**Was diese Runde geliefert hat:** [`runs/noel/patches/main-homodyne.patch`](patches/main-homodyne.patch), ein Commit gegen `origin/main` (`50341f9`), der den Umbau aus Runde 9 auf Philips `fast.py` überträgt. `main` und `philip-fastest` selbst sind unverändert. Anwenden (lässt sich auf beide Branches ohne Konflikt anwenden, geprüft mit `git am`):
+
+```bash
+git fetch origin
+git checkout main            # oder philip-fastest
+git show origin/noel:runs/noel/patches/main-homodyne.patch | git am
+```
+
+Inhalt des Patches:
+
+- `differometor/fast.py`: `EntryPlan.selection` (Phasenfaktor des Homodyne-Detektors am Auswahlvektor), Verknüpfungen mit `jnp.sqrt` auf der Parameterzeile samt Kettenregel, Ableitung nach der Phase, `supports` ohne die beiden Ausschlüsse, fünf weitere Host-Arrays (bei Philip `Constant`, also ohne Kosten in JAX). Den Auswahlvektor bekommt der Plan direkt nach dem Bau (`plan.selection = ...`), in beiden Wegen (mit und ohne Zwischenspeicher).
+- `differometor/simulate.py`: nur der Docstring.
+- Der mitgelieferte Bytecode der beiden Module ist neu erzeugt (`compileall --invalidation-mode checked-hash`, Python 3.12.15, Hash stimmt mit der Quelle überein).
+- `runs/check_setups.py` erwartet für aLIGO verknüpft und Voyager den schnellen Weg. Neu dazu: `runs/noel/test_variants.py`, `variant_fixture.py`, `variant_run.py`.
+
+Geprüft auf Noels Mac (ohne die C-Zerlegung, die nur unter x86-Linux lädt):
+
+| Prüfung | Ergebnis mit Patch |
+| --- | --- |
+| `benchmark.py` auf dem öffentlichen Fixture | `PASS`, alle Arrays bitgleich zum ungepatchten `main` (Carrier, Signal, Noise, Sensitivity, Powers, Gradient) |
+| `runs/noel/test_variants.py` | 21 Varianten, alle über den schnellen Weg, WORST `|dln s|` 4,95e-07 und Gradient 2,41e-08 (dieselben Werte wie auf `noel`) |
+| `runs/check_setups.py` | alle vier Setups schnell, aLIGO verknüpft 1,8e-08, Voyager 7,3e-13 (Sensitivity) |
+| Philips Tests `test_reverse`, `test_forward_cache`, `test_static`, `test_compat`, `test_condensed`, `test_ports` | laufen durch (`test_reverse` WORST 2,6e-13) |
+| Homodyne-Variante des Fixtures (`variant_run.py`) | `PASS`, 340 ms statt 9'837 ms, Fehler gegen die Referenz aus dem Original-Code 8,3e-08 |
+| Zufalls-UIFO Seed 0 (Homodyne) und Seed 2 (Detektor) | `PASS`, 345 und 341 ms |
+| `philip-fastest` mit Patch | Fixture `PASS` 299 ms, Homodyne-Variante `PASS` 305 ms |
+
+Die Zeiten dieser Runde sind nur Grössenordnungen: Der Deckel war bis etwa 19:00 zu, der Akku bei 20 bis 23 %. Aus demselben Grund gab es in dieser Runde keine Optimierung an `noel` und keinen Wechselvergleich.
+
+Was an `main` auffällt und in die Regelfragen gehört (Feststellung, keine Wertung): Eine Datei `statistics.py` im Wurzelverzeichnis fängt das `import statistics` von `benchmark.py` ab, um vor `import jax` Start-Massnahmen auszuführen. Dazu kommen mitgelieferte `.pyc`-Dateien, eine `.pth`-Datei unter `packaging/`, Eingriffe in JAX und XLA für den ganzen Prozess (`_tuning.py`) und eine vorkompilierte Bibliothek (`_native/libpattern_lu.so`). Das sind die Fragen B4, B5 und B6 aus `FRAGEN_AN_FEYER.md`.
 
 ## Was in Runde 11 geändert wurde
 
@@ -559,12 +596,13 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 
 | Branch | Zuletzt gesehen | Stand in `noel` |
 | --- | --- | --- |
-| `origin/philip` | `8435944` (21.11. 15:28). Neu seit `ab82e42`: `b3676de`, `5934330` und `8435944` (nur die Ergebnisdateien der drei VM-Messreihen, kein Code) | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
-| `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), unverändert am 21.11. 16:35. Neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
+| `origin/philip` | `8435944` (21.11. 15:28), unverändert am 21.11. 18:36. Neu seit `ab82e42`: `b3676de`, `5934330` und `8435944` (nur die Ergebnisdateien der drei VM-Messreihen, kein Code) | Am Code des Branches selbst ändert sich nichts. Neu ist der Ordner `_nacht/` mit Philips Nachtlauf `philip-nacht` als Git-Bundles, seinen Notizen und Messungen auf einer VM mit Xeon Platinum 8468 (siehe unten). Nichts übernommen: Sein Stand nutzt Mittel, die bei uns unter die Regelfrage B6 und die Abmachung «keine Caches» fallen. Das entscheidet Noel |
+| `origin/max/lu-once` | `4d5b43d` (21.11. 13:54), unverändert am 21.11. 18:36. Neu seit `79ae580`: `f5a176d` (statischer Bauplan für den JAX-Weg, `differometor/plan.py`), `4d5b43d` (Nachtbericht und Messdaten) | nicht übernommen. Max' Nachtlauf nennt `noel@6b67cfd` als besten Stand und findet «keinen Hebel ab 5 ms ohne Regelfrage». `plan.py` beschleunigt den dichten JAX-Weg, den wir nach Runde 9 für UIFO-Setups nicht mehr brauchen |
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), am 21.11. 15:06 auf dem Server gelöscht (der Commit steckt in `origin/max/lu-once`) | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
-| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 16:35, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
-| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 16:35 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
-| `origin/main` | `5eece1d` | unverändertes Kit |
+| `origin/Joel` | `9f79a5f` (21.11. 17:53), neu seit `76e799f`: nur das README (Verweis auf das neue Tag `joels-fastest` = `ac7aedc`). Baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
+| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 18:36 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
+| `origin/main` | `50341f9` (21.11. 17:30). Bis dahin das unveränderte Kit `5eece1d`, seither Philips Linie `philip-nacht` mit `noel` bis `cb902d7` (Runde 7) | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Für `main` gibt es den Patch aus Runde 12. Das unveränderte Kit ist weiter `5eece1d` |
+| `origin/philip-fastest` | `efad894` (21.11. 18:26), neu. `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon) | nicht übernommen. Der Patch aus Runde 12 passt auch hier |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
 

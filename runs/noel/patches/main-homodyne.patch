@@ -1,0 +1,1091 @@
+From 482dcb4b89325acb5ef28dfb41694940c48f3eae Mon Sep 17 00:00:00 2001
+From: Noel Blatter <noel.blatter@gmail.com>
+Date: Sat, 21 Nov 2026 19:04:27 +0100
+Subject: [PATCH] Fast path covers balanced homodyne detectors and sqrt
+ parameter links
+
+Feyer's final evaluation uses a similar setup with slightly different
+parameters and components. The public fixture was drawn with
+uifo(3, random=True), which picks a balanced homodyne readout in half of
+the cases, and benchmark.py reads both kinds. Such setups used the dense
+JAX path so far: 9.8 s instead of 0.34 s for the fixture with a homodyne
+readout (M4, runs/noel/variant_run.py).
+
+- qhd: the selection vector of the noise detector gets its phase factor
+  on the host (EntryPlan.selection), and the phase has a derivative in
+  case it is a design variable.
+- Parameter links with jnp.sqrt (amplitude modulation) are evaluated on
+  the parameter row, with the chain rule in the reverse pass. Other
+  linking functions still use simulate_jax.
+- runs/noel/test_variants.py compares 21 random UIFO setups with
+  simulate_jax. variant_fixture.py and variant_run.py make a variant
+  fixture with a reference from the unchanged upstream code and run
+  benchmark.py on it.
+
+The public fixture is unaffected: all benchmark arrays are bit-identical.
+The shipped bytecode of fast.py and simulate.py is regenerated.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ differometor/__pycache__/fast.cpython-312.pyc | Bin 105047 -> 112588 bytes
+ .../__pycache__/simulate.cpython-312.pyc      | Bin 13915 -> 14034 bytes
+ differometor/fast.py                          | 131 ++++++++++++++--
+ differometor/simulate.py                      |  11 +-
+ runs/check_setups.py                          |  10 +-
+ runs/noel/test_variants.py                    | 141 +++++++++++++++++
+ runs/noel/variant_fixture.py                  | 144 ++++++++++++++++++
+ runs/noel/variant_run.py                      |  63 ++++++++
+ 8 files changed, 482 insertions(+), 18 deletions(-)
+ create mode 100644 runs/noel/test_variants.py
+ create mode 100644 runs/noel/variant_fixture.py
+ create mode 100644 runs/noel/variant_run.py
+
+diff --git a/differometor/__pycache__/fast.cpython-312.pyc b/differometor/__pycache__/fast.cpython-312.pyc
+index 598f62b062b51413056332457a69758cb3ef5872..21beeefd5c2be60214e6620dff9e758f47f54263 100644
+GIT binary patch
+delta 18083
+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
+VdaItSBE!j%qzsx%|2#^z{67Gr{MG;f
+
+delta 12059
+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
+ZD^Q3Z&p6;`(3I|g5~V3!7Y#7`{{Us+GG_n)
+
+diff --git a/differometor/__pycache__/simulate.cpython-312.pyc b/differometor/__pycache__/simulate.cpython-312.pyc
+index c0b770156fb21fd0ce9bf1799bff38f9f13d95fb..5d656ca3973f6971c3e175e4fe24474e8f59b42e 100644
+GIT binary patch
+delta 801
+zcmZvZO-vI(7=~v+P$(#6OZnNBPRn0m`7yCYVbz0L6I??4iHW2n?AqPR+IAOq7o#?Y
+zcrqTFJ=C5`FBVRX*$dH_=-CT+@M1!|dl?h&xL?iQn8ReAyzji<H{blse=qcW>+bGs
+zMF`#Ycda&lA1r<7Y4}^j7W=FJjs3Qlq&kVa;t~<JG+i|nStPnaB=T6wOIk*e$%bCg
+z<rkVlWW`c4mMe-|8?rb_Bu#dGrm8*3EB43U&>2XwfAr4T9n8#sm}esPDl?V7D;ZM3
+zy>5`as^v@~8A`KkMt`OlZjG#)YHcV@)y*T>Z7pM|x@HnpBciNkvx=d+0lG1pl}u}P
+zd1*yhzyEMK^+2>=Gr{?0m}shn?Yv|u>rbWUB8i)da@t*UdvjAaEK{6x-ZPId7M+v8
+zS{K%xwdmh={K>f&UunaCoZXpFD;{t@Up&S;NgVq%6s~d=j<&gH+Kyslb+*RRvq0z2
+zaI~7Pq-h6GCz_mY`1XC&2h`<h-9YD2oU0dWMS20K2Zc#hs0h>#6hQt!*;n$>KA<4#
+z8z>7Uf%dz!LkCcxzs#3-ItbzrVuEF^#8DO~<dp~m4Wm$`%2#+A0V2q4o2{@k3Ka7~
+zM}S6ABv#E;a&!!690do<=~9|b08OE>cwMLolmnWW_N+62vnU+f9jS9QZqIBK_lt+I
+z#iI~U=aTl9OKb)l2{bxU=W9Go0?m63UIw~?LeX6Yrni@A<o0ui(S;*+kuHF?c)G@e
+zcGa8KwWNJL!8RXs1EY~~XoTLx;JJl8Qwk^Tmx-{uze|MMLA!(PlVqQLnCNJJq2(MW
+GUg3YE6AK9d
+
+delta 631
+zcmXxgJ8aWH7zgk>N(;mdc{xd2=W%(pX`BF+E-<)&)WBrKhJ+LZH6$V-4?~jjP=q=%
+zFhw3BPf@1O0Yc>g!N!J!kSHB1Ar=O<4~dZhe?h+CbU*#?yZi3GwT_zJ&u+JCju7%Q
+z89sP_SAVnbo%)XbqQ*zxi%or}#~x}OtyS$+JFHo6H|p*Cc^9+ClX|a)aZPXOm1pfL
+ztJr()_4H1cWgpcl>v^N(&-j?ut}u;t?XqSS>x|d_i1EdL_V^5c{RN{Ci2uj6K+ZS}
+zh#t1xt+#fXTCaNNf%bIUii$TWy=^@X-ddz>>oD<Wfqt+)Wv|auu)=2|b2M!6jqh}q
+z)8vnp=twqYn77xkK$4k>G?w55>LiIJMrE@Mr%*1ko}UVP0tl!@Cv&4tldL@HkNe<3
+zc}bLwR8s{XN+dpUC=3J$qCzCNG*kyFgl+A@5)s2gWuU+^hASix8p;D1Bviz?B8rNU
+zNPMK23dB*2*lkOu1PN5qIW&bzlX!B}FdL9Tt&-64uskTk8Y)LJ*@-$<K}HFAXKR5Q
+z5|?IwaL$PHP;3KpPSR@=WvoCEb>8Xc0ylInQEt5Cl8VWu^Wcl9OC*zfm72<X^4spa
+y{(k>!ZtEajg3Fj~QIcAn$YU8w6n%v{rC06qe)Fh3dx|(0im6#U9qUH%IsFHFG|G<v
+
+diff --git a/differometor/fast.py b/differometor/fast.py
+index e33b344..abcddb4 100644
+--- a/differometor/fast.py
++++ b/differometor/fast.py
+@@ -1,9 +1,10 @@
+ """
+ Fast host-side simulation path: sparse LU solves with SuperLU and a hand-written adjoint.
+ 
+-`differometor.simulate.simulate` dispatches here for setups without parameter linking,
+-without homodyne detectors (qhd), with exactly one quantum noise detector and a single
+-carrier operating point. Everything else uses the original JAX implementation.
++`differometor.simulate.simulate` dispatches here for setups with exactly one quantum noise
++detector (a `qnoised` or a balanced homodyne detector `qhd`) and a single carrier operating
++point. Parameter links are covered for the linking functions listed in `LINK_RULES`. Everything
++else uses the original JAX implementation (see `supports`).
+ 
+ How it works
+ ------------
+@@ -421,6 +422,20 @@ class _EntryBlock:
+         return parameters_bar
+ 
+ 
++# Linking functions (derived parameters, e.g. a signal amplitude that follows `sqrt(laser power)`)
++# the fast path evaluates on the host: the NumPy value and the derivative as a function of input
++# and value. Setups with any other linking function use the original JAX implementation.
++LINK_RULES = ((jnp.sqrt, np.sqrt, lambda x, y: 0.5 / y),)
++
++
++def _link_rule(function):
++    """(value, derivative) for a linking function of `LINK_RULES`, None for any other function."""
++    for known, value, derivative in LINK_RULES:
++        if function is known:
++            return value, derivative
++    return None
++
++
+ class EntryPlan:
+     """Parameter expansion and component evaluation (mirrors the start of `simulate`)."""
+ 
+@@ -439,9 +454,22 @@ class EntryPlan:
+             if np.any(np.imag(values) != 0):
+                 raise ValueError("fast path requires real changing values")
+         changing = self.signal_changing_indices
++        # Parameter links: slot `link_targets[i]` gets `rule(slot link_sources[i])`.
++        self.link_sources = np.asarray(A["linked_indices"], np.intp).reshape(-1)
++        self.link_targets = np.asarray(A["indices_to_link"], np.intp).reshape(-1)
++        self.link_rules = []
++        if self.link_sources.size:
++            from differometor.build import LINKING_FUNCTIONS
++
++            self.link_rules = [_link_rule(LINKING_FUNCTIONS[i]) for i in np.asarray(A["linking_function_indices"]).reshape(-1)]
++        # Balanced homodyne detector: the selection entries `qhd_places` carry a phase factor.
++        self.qhd_parameter_indices = np.asarray(A["qhd_parameter_indices"], np.intp).reshape(-1)
++        self.qhd_places = np.asarray(A["qhd_placing_indices"], np.intp).reshape(-1, 3)[:, 2]
++        self.selection_base = np.asarray(A["noise_selection_vectors"])[0, 0]
+         # Parameter slots whose derivative reaches a design variable (see `pullback`).
+         differentiable = np.zeros(self.base.size, bool)
+         differentiable[self.optimized_parameter_indices] = True
++        differentiable[self.link_targets] = differentiable[self.link_sources]
+         differentiable[self.carrier_changing_indices] = False
+         differentiable[self.signal_changing_indices] = False
+         block = lambda name, changing=(): _EntryBlock(
+@@ -449,9 +477,35 @@ class EntryPlan:
+         )
+         self.carrier, self.signal, self.noise = block("carrier"), block("signal", changing), block("noise", changing)
+ 
+-    def _rows(self, optimized_parameters):
++    def _design_row(self, optimized_parameters):
++        """The parameter row with the design variables in place, before the links."""
+         P = self.base.copy()
+         P[self.optimized_parameter_indices] = np.asarray(optimized_parameters, float)[self.optimized_value_indices]
++        return P
++
++    def _row(self, optimized_parameters):
++        """The parameter row with design variables and linked parameters, before the sweeps."""
++        P = self._design_row(optimized_parameters)
++        if self.link_targets.size:
++            # All links read the row as it is before any of them writes (as in `simulate_jax`).
++            sources = P[self.link_sources]
++            P[self.link_targets] = [value(x) for (value, _), x in zip(self.link_rules, sources)]
++        return P
++
++    def selection(self, optimized_parameters):
++        """
++        The selection vector of the noise detector. A balanced homodyne detector multiplies the
++        entries of its second port by `exp(1j * phase)`, with the phase parameter in degrees.
++        """
++        selection = self.selection_base
++        if self.qhd_parameter_indices.size:
++            phases = np.exp(1j * np.radians(self._row(optimized_parameters)[self.qhd_parameter_indices]))
++            selection = selection.astype(complex)
++            np.multiply.at(selection, self.qhd_places, phases)
++        return selection
++
++    def _rows(self, optimized_parameters):
++        P = self._row(optimized_parameters)
+         carrier_rows = np.tile(P, (self.carrier_changing_values.shape[1], 1))
+         carrier_rows[:, self.carrier_changing_indices] = np.real(self.carrier_changing_values).T
+         signal_rows = np.tile(carrier_rows[0], (self.signal_changing_values.shape[1], 1))
+@@ -470,10 +524,12 @@ class EntryPlan:
+         noise, noise_tape = self.noise.run(signal_rows)
+         return (carrier[:, 0], signal, noise), (carrier_tape, signal_tape, noise_tape)
+ 
+-    def pullback(self, tape, carrier_bar, signal_bar, noise_bar, value_count, compact=False):
++    def pullback(self, tape, carrier_bar, signal_bar, noise_bar, value_count, compact=False, optimized_parameters=None, selection_bar=None):
+         """Gradient with respect to the design variables from the cotangents of the entries.
+ 
+         With `compact`, `signal_bar` only has the rows of `self.signal.wanted` (see `backward`).
++        `optimized_parameters` is needed when the setup has parameter links, `selection_bar` (the
++        cotangent of `selection`) when it has a balanced homodyne detector.
+         """
+         carrier_tape, signal_tape, noise_tape = tape
+         parameter_count = self.base.size
+@@ -483,6 +539,18 @@ class EntryPlan:
+         signal_rows_bar[self.signal_changing_indices] = 0.0  # overwritten by the sweep values
+         P_bar = self.carrier.back(carrier_tape, carrier_bar[:, None], parameter_count) + signal_rows_bar
+         P_bar[self.carrier_changing_indices] = 0.0
++        if self.qhd_parameter_indices.size and selection_bar is not None:
++            # selection = base * exp(1j * radians(phase)): d selection / d phase = 1j * pi / 180 * selection
++            places = self.qhd_places
++            phase_bar = (selection_bar[places] * 1j * self.selection(optimized_parameters)[places]).real * (np.pi / 180)
++            np.add.at(P_bar, self.qhd_parameter_indices, phase_bar)
++        if self.link_targets.size:
++            sources = self._design_row(optimized_parameters)[self.link_sources]
++            targets_bar = P_bar[self.link_targets]
++            P_bar[self.link_targets] = 0.0  # overwritten by the links
++            with np.errstate(divide="ignore", invalid="ignore"):
++                slopes = np.array([derivative(x, value(x)) for (value, derivative), x in zip(self.link_rules, sources)])
++                np.add.at(P_bar, self.link_sources, slopes * targets_bar)
+         return np.bincount(self.optimized_value_indices, P_bar[self.optimized_parameter_indices], value_count)
+ 
+ 
+@@ -1281,6 +1349,19 @@ def backward(
+     return carrier_entries_bar, signal_entries_bar, noise_entries_bar
+ 
+ 
++def selection_cotangent(carrier, noise, MU, noise_bar):
++    """
++    Cotangent of the selection vector of the noise detector, shape (m,). The detector weights are
++    w = selection * carrier for the upper sideband, conj(selection * carrier) for the lower one
++    and the selection itself elsewhere; their cotangent is the `w_bar` of `backward`.
++    """
++    n = carrier.shape[0]
++    selection_bar = 2 * np.conj((noise_bar * NOISE_SCALE / noise) @ MU)
++    selection_bar[:n] *= carrier
++    selection_bar[n : 2 * n] = np.conj(selection_bar[n : 2 * n]) * carrier
++    return selection_bar
++
++
+ # ---------------------------------------------------------------------
+ # JAX integration
+ # ---------------------------------------------------------------------
+@@ -1312,15 +1393,35 @@ HOST_KEYS = (
+     "noise_function_indices",
+     "noise_output_indices",
+     "noise_system_matrix_indices",
++    "qhd_parameter_indices",
++    "qhd_placing_indices",
++    "linked_indices",
++    "linking_function_indices",
++    "indices_to_link",
+ )
+ 
+ 
++def _links_supported(arrays):
++    """Parameter links are covered when their functions are known at trace time and in `LINK_RULES`."""
++    if arrays["linked_indices"].shape[0] == 0:
++        return True
++    indices = arrays["linking_function_indices"]
++    if not isinstance(indices, np.ndarray):  # a traced index array: the functions are not known here
++        return False
++    from differometor.build import LINKING_FUNCTIONS
++
++    return all(0 <= i < len(LINKING_FUNCTIONS) and _link_rule(LINKING_FUNCTIONS[i]) is not None for i in indices.reshape(-1).tolist())
++
++
+ def supports(arrays):
+-    """Static (shape/dtype only) check whether the fast path covers these `simulate` arguments."""
++    """
++    Static check whether the fast path covers these `simulate` arguments (shapes, dtypes and the
++    linking functions): one quantum noise detector, which may be a balanced homodyne detector, a
++    single carrier operating point, real design variables and known parameter links.
++    """
+     optimized = arrays["optimized_parameters"]
+     return (
+-        arrays["linked_indices"].shape[0] == 0
+-        and arrays["qhd_parameter_indices"].shape[0] == 0
++        _links_supported(arrays)
+         and arrays["noise_selection_vectors"].shape[0] == 1
+         and arrays["carrier_changing_values"].ndim == 2
+         and arrays["carrier_changing_values"].shape[1] == 1
+@@ -1356,6 +1457,7 @@ def _run_forward(optimized_parameters, host_arrays, taped):
+     """The forward pass on the host: results (carrier, signal, noise, Y, MU) and the reusable work."""
+     A = dict(zip(HOST_KEYS, host_arrays))
+     entry_plan, plan = EntryPlan(A), SystemPlan(A)
++    plan.selection = entry_plan.selection(optimized_parameters)  # with the phases of a homodyne detector
+     if taped:  # a pullback will follow: evaluate the entries with derivatives once, here
+         entries, tape = entry_plan.entries(optimized_parameters)
+     else:
+@@ -1385,7 +1487,17 @@ def _run_backward(optimized_parameters, results, work, carrier_bar, signal_bar,
+         wanted=entry_plan.signal.wanted,  # only the entries the pullback reads
+         varying=entry_plan.signal.entry_varying,
+     )
+-    gradient = entry_plan.pullback(tape, *entries_bar, value_count=optimized_parameters.shape[0], compact=True)
++    selection_bar = None
++    if entry_plan.qhd_parameter_indices.size:  # a homodyne phase may be a design variable
++        selection_bar = selection_cotangent(carrier, noise, MU, np.asarray(noise_bar, float).reshape(F))
++    gradient = entry_plan.pullback(
++        tape,
++        *entries_bar,
++        value_count=optimized_parameters.shape[0],
++        compact=True,
++        optimized_parameters=optimized_parameters,
++        selection_bar=selection_bar,
++    )
+     return gradient.astype(optimized_parameters.dtype)
+ 
+ 
+@@ -1417,6 +1529,7 @@ def _host_backward(optimized_parameters, *rest):
+     carrier, signal, noise, Y, MU, carrier_bar, signal_bar, noise_bar = rest[k:]
+     A = dict(zip(HOST_KEYS, rest[:k]))
+     entry_plan, plan = EntryPlan(A), SystemPlan(A)
++    plan.selection = entry_plan.selection(optimized_parameters)  # with the phases of a homodyne detector
+     entries, tape = entry_plan.entries(optimized_parameters)
+     results = (np.asarray(carrier)[:, 0], np.asarray(signal), np.asarray(noise).reshape(-1), np.asarray(Y), np.asarray(MU))
+     return _run_backward(optimized_parameters, results, (entry_plan, plan, entries, tape, None), carrier_bar, signal_bar, noise_bar)
+diff --git a/differometor/simulate.py b/differometor/simulate.py
+index 7fa3bd9..1bfde2e 100644
+--- a/differometor/simulate.py
++++ b/differometor/simulate.py
+@@ -93,11 +93,12 @@ def simulate(
+     """
+     Run one full simulation pass: carrier, signal, and quantum noise.
+ 
+-    Same arguments and outputs as `simulate_jax`. Setups without parameter linking,
+-    without homodyne detectors (qhd), with a single quantum noise detector and a single
+-    carrier operating point use the sparse host path in `differometor.fast` (a
+-    `jax.custom_vjp` around `jax.pure_callback`, differentiable with respect to
+-    `optimized_parameters` in reverse mode). All other setups use `simulate_jax`.
++    Same arguments and outputs as `simulate_jax`. Setups with a single quantum noise detector
++    (a `qnoised` or a balanced homodyne detector `qhd`) and a single carrier operating point use
++    the sparse host path in `differometor.fast` (a `jax.custom_vjp` around `jax.pure_callback`,
++    differentiable with respect to `optimized_parameters` in reverse mode). Parameter links are
++    covered for the linking functions in `differometor.fast.LINK_RULES`. All other setups use
++    `simulate_jax` (see `differometor.fast.supports`).
+     """
+     arrays = dict(locals())
+     if fast.supports(arrays):
+diff --git a/runs/check_setups.py b/runs/check_setups.py
+index eae2949..aee4b45 100644
+--- a/runs/check_setups.py
++++ b/runs/check_setups.py
+@@ -1,8 +1,10 @@
+ """Dispatcher check on other public setups: fast path vs original JAX (outputs and full gradient).
+ 
+ aLIGO (space / frequency modulation): one noise detector, no qhd, no links  -> fast path
+-aLIGO (amplitude modulation): linked parameter                             -> JAX fallback
+-Voyager: qhd homodyne detector with two noise detectors                    -> JAX fallback
++aLIGO (amplitude modulation): linked parameter (sqrt of the laser power)   -> fast path
++Voyager: balanced homodyne detector (qhd)                                  -> fast path
++
++Random UIFO setups, also with a balanced homodyne readout: runs/noel/test_variants.py
+ """
+ import os
+ import json
+@@ -59,5 +61,5 @@ s = check("aLIGO space_modulation", *aligo("space_modulation"), True)
+ err = np.abs(np.log(np.asarray(s)) - np.log(aligo_data["sensitivities"])).max()
+ print(f"  aLIGO vs public test data: max |log diff| {err:.2e} (example uses atol 1e-6)")
+ check("aLIGO frequency_modulation", *aligo("frequency_modulation"), True)
+-check("aLIGO amplitude_modulation (linked)", *aligo("amplitude_modulation"), False)
+-check("Voyager (qhd)", *voyager(), False)
++check("aLIGO amplitude_modulation (linked)", *aligo("amplitude_modulation"), True)
++check("Voyager (qhd)", *voyager(), True)
+diff --git a/runs/noel/test_variants.py b/runs/noel/test_variants.py
+new file mode 100644
+index 0000000..b97a66d
+--- /dev/null
++++ b/runs/noel/test_variants.py
+@@ -0,0 +1,141 @@
++"""Setup variants: the fast path against the original JAX code on random UIFO setups.
++
++    python runs/noel/test_variants.py <repo> [--quick] [--size N] [--seeds N]
++
++The final evaluation uses "a similar optical setup ... with slightly different parameters and
++components". `differometor.setups.uifo(random=True)` draws such setups: beamsplitters or
++directional beamsplitters in the centers, lasers or squeezers at the boundaries and one readout,
++which is a plain detector or a balanced homodyne detector (two ports, a local oscillator and a
++`qhd` noise detector) with equal probability.
++
++For every variant the design variables get random values in the ranges of the public fixture.
++`simulate` has to take the fast path, and carrier, signal, noise, sensitivity and the gradient of
++the benchmark loss have to agree with `simulate_jax`. The sensitivity is compared as the
++benchmark does it: max |ln s - ln s_ref|, which must stay below 1e-5 there.
++
++Random values can give a setup without a usable readout. Two kinds are recognized and not
++counted as failures: the reference itself is not finite (no light reaches the detector), or the
++detected signal is a difference of nearly equal numbers (`cancellation`: the sum of the
++magnitudes of its parts over its own magnitude). In the second case sensitivity and gradient are
++rounding noise in both implementations, and only the fields at the detector are compared.
++
++Variants: space modulation with several seeds (the benchmark kind), forced plain and homodyne
++readouts, frequency and amplitude modulation (the latter has linked parameters), other grid
++sizes, and a homodyne phase as a design variable. `--quick` runs a small selection.
++"""
++import os, sys, time
++os.environ["JAX_PLATFORMS"] = "cpu"; os.environ["JAX_ENABLE_X64"] = "true"
++repo = sys.argv[1]
++sys.path.insert(0, repo)
++import jax, jax.numpy as jnp, numpy as np
++import differometor as df
++from differometor import fast
++from differometor.setups import constrain_inter_grid_cell_spaces, uifo
++from differometor.simulate import simulate_jax
++
++option = lambda name, default: int(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
++QUICK, SIZE, SEEDS = "--quick" in sys.argv, option("--size", 3), option("--seeds", 6)
++PROPERTIES = ["reflectivity", "tuning", "db", "angle", "power", "mass", "length"]
++FREQUENCIES = jnp.asarray(np.geomspace(800.0, 3000.0, 5))
++# Limits: the benchmark tolerance for the sensitivity. Random values give badly conditioned signal
++# systems now and then (condition number 1e12 after equilibration for seed 4), where any two
++# solvers differ by 1e-7; a mistake in the fast path shows as a deviation of order one.
++LIMIT_SENSITIVITY, LIMIT_GRADIENT, LIMIT_FIELDS, LIMIT_CANCELLATION = 1e-5, 1e-4, 1e-6, 1e6
++rel = lambda a, b: float(np.abs(np.asarray(a) - np.asarray(b)).max() / max(np.abs(np.asarray(b)).max(), 1e-300))
++
++
++def random_values(pairs, rng):
++    """Random design values in the ranges of the public fixture (reflectivities also close to 0 and 1)."""
++    draw = {
++        "reflectivity": lambda: [rng.uniform(0, 1), 10 ** rng.uniform(-9, -1), 1 - 10 ** rng.uniform(-6, -1)][rng.integers(3)],
++        "tuning": lambda: rng.uniform(-360, 360),
++        "db": lambda: rng.uniform(0, 10),
++        "angle": lambda: rng.uniform(0, 360),
++        "power": lambda: 10 ** rng.uniform(-6, 2.3),
++        "mass": lambda: 10 ** rng.uniform(-2, 2.3),
++        "length": lambda: rng.uniform(0, 4000),
++        "phase": lambda: rng.uniform(0, 360),
++    }
++    return np.array([draw[(pair if isinstance(pair[0], str) else pair[0])[1]]() for pair in pairs])
++
++
++def evaluation(simulate, arrays, ports):
++    """Loss as in benchmark.py (reference 1), its gradient and the physical outputs."""
++
++    def loss(p):
++        carrier, signal, noise = simulate(**dict(arrays, optimized_parameters=p))
++        signals = df.signal_detector(carrier, signal)[ports]
++        detected = signals.squeeze() if ports.shape[0] == 1 else signals[0] - signals[1]
++        sensitivity = (noise / jnp.abs(detected)).squeeze()
++        return jnp.mean(jnp.log10(sensitivity)), (carrier, signal, noise, sensitivity, df.power_detector(carrier))
++
++    return jax.jit(jax.value_and_grad(loss, has_aux=True))
++
++
++failures, worst = [], dict(sensitivity=0.0, gradient=0.0)
++
++
++def case(label, size, seed, mode="space_modulation", boundaries=None, extra_pairs=()):
++    setup, _, _, resolved = uifo(size, boundaries=boundaries, random=True, mode=mode, random_seed=seed, verbose=True)
++    readout = "homodyne" if "balanced_homodyne" in resolved.values() else "detector"
++    pairs = constrain_inter_grid_cell_spaces(setup.parameters, PROPERTIES) + [list(pair) for pair in extra_pairs]
++    arrays, ports, *_ = df.run_build_step(setup, [("f", "frequency")], FREQUENCIES, pairs)
++    ports, n = np.asarray(ports), arrays["carrier_matrix"].shape[0]
++    p = jnp.asarray(random_values(pairs, np.random.default_rng(1000 + seed)))
++    supported = bool(fast.supports(dict(arrays, optimized_parameters=p)))
++    text = f"{label:34s} {readout:8s} n={n:4d} variables={p.shape[0]:4d} fast={supported!s:5s}"
++    # The noise detector reads the rows of the detector ports, so the gradient needs no second factorization.
++    rows = np.concatenate([ports, ports + n])
++    same_rows = set(np.nonzero(np.asarray(arrays["noise_selection_vectors"])[0, 0])[0].tolist()) == set(rows.tolist())
++    start = time.perf_counter(); (_, reference), gradient_reference = evaluation(simulate_jax, arrays, jnp.asarray(ports))(p); seconds_jax = time.perf_counter() - start
++    start = time.perf_counter(); (_, outputs), gradient = evaluation(df.simulate, arrays, jnp.asarray(ports))(p); seconds = time.perf_counter() - start
++    carrier, signal = np.asarray(reference[0]), np.asarray(reference[1])
++    parts = (np.abs(carrier[ports]) * (np.abs(signal[ports]) + np.abs(signal[ports + n]))).sum(axis=0)
++    detected = np.asarray(df.signal_detector(reference[0], reference[1]))[ports]
++    detected = np.abs(detected[0] if len(ports) == 1 else detected[0] - detected[1])
++    with np.errstate(divide="ignore", invalid="ignore"):
++        cancellation = float(np.max(parts / detected))
++        sensitivity = float(np.abs(np.log(np.asarray(outputs[3])) - np.log(np.asarray(reference[3]))).max())
++    finite = all(bool(np.isfinite(np.asarray(x)).all()) for x in (*reference, gradient_reference))
++    fields = max(rel(outputs[0], reference[0]), rel(np.asarray(outputs[1])[rows], signal[rows]), rel(outputs[2], reference[2]), rel(outputs[4], reference[4]))
++    gradient_deviation = rel(gradient, gradient_reference)
++    text += f"  fields {fields:.0e} |dln s| {sensitivity:.1e} gradient {gradient_deviation:.1e} cancellation {cancellation:.0e}  {seconds:5.2f} s (JAX {seconds_jax:4.1f} s)"
++    ok = supported and same_rows
++    if not finite:
++        text += "  [no usable readout: reference not finite, skipped]"
++    elif cancellation > LIMIT_CANCELLATION:
++        ok = ok and fields <= LIMIT_FIELDS
++        text += "  [readout cancels: only the fields are compared]"
++    else:
++        ok = ok and sensitivity <= LIMIT_SENSITIVITY and gradient_deviation <= LIMIT_GRADIENT and bool(np.any(np.asarray(gradient) != 0))
++        worst["sensitivity"], worst["gradient"] = max(worst["sensitivity"], sensitivity), max(worst["gradient"], gradient_deviation)
++    if not ok:
++        failures.append(label)
++        text += "  <-- FAILED"
++    print(text, flush=True)
++
++
++first_boundary = "01"
++homodyne, detector = {first_boundary: "balanced_homodyne"}, {first_boundary: "detector"}
++if QUICK:
++    case(f"{SIZE}x{SIZE} space seed 0", SIZE, 0)
++    case(f"{SIZE}x{SIZE} space homodyne seed 1", SIZE, 1, boundaries=homodyne)
++else:
++    for seed in range(SEEDS):
++        case(f"{SIZE}x{SIZE} space seed {seed}", SIZE, seed)
++    for seed in (10, 11):
++        case(f"{SIZE}x{SIZE} space detector seed {seed}", SIZE, seed, boundaries=detector)
++        case(f"{SIZE}x{SIZE} space homodyne seed {seed}", SIZE, seed, boundaries=homodyne)
++    case(f"{SIZE}x{SIZE} frequency detector", SIZE, 20, "frequency_modulation", detector)
++    case(f"{SIZE}x{SIZE} frequency homodyne", SIZE, 21, "frequency_modulation", homodyne)
++    case(f"{SIZE}x{SIZE} amplitude detector (links)", SIZE, 22, "amplitude_modulation", detector)
++    case(f"{SIZE}x{SIZE} amplitude homodyne (links)", SIZE, 23, "amplitude_modulation", homodyne)
++    case(f"{SIZE}x{SIZE} homodyne, phase is a variable", SIZE, 24, boundaries=homodyne, extra_pairs=[(f"boundary{first_boundary}noise", "phase")])
++    for size in (1, 2, 4):
++        if size != SIZE:
++            case(f"{size}x{size} space detector", size, 30 + size, boundaries=detector)
++            case(f"{size}x{size} space homodyne", size, 50 + size, boundaries=homodyne)
++print(f"WORST |dln s| {worst['sensitivity']:.2e} (limit {LIMIT_SENSITIVITY:.0e}), gradient {worst['gradient']:.2e} (limit {LIMIT_GRADIENT:.0e})")
++if failures:
++    sys.exit(f"FAILED: {failures}")
++print("OK")
+diff --git a/runs/noel/variant_fixture.py b/runs/noel/variant_fixture.py
+new file mode 100644
+index 0000000..a52f9db
+--- /dev/null
++++ b/runs/noel/variant_fixture.py
+@@ -0,0 +1,144 @@
++"""Make a variant of the public fixture: a setup file and reference sensitivities for benchmark.py.
++
++    python runs/noel/variant_fixture.py <upstream tree> <output folder> <kind> [seed]
++
++The final evaluation uses "a similar optical setup ... with slightly different parameters and
++components". This script writes such a setup as `uifo_800_3000.json` and its reference as
++`uifo_800_3000_test_data.json` (the names benchmark.py reads) into the output folder. The
++reference comes from the simulator in `<upstream tree>`, which should be the unchanged original
++(`git archive 5eece1d | tar -x -C <folder>`), so it does not depend on the code under test.
++`runs/noel/variant_run.py` runs the benchmark on the result.
++
++Kinds:
++  perturbed   the public fixture with every design value changed a little
++  homodyne    the public fixture with a balanced homodyne readout in place of its detector
++  swapped     the public fixture with one center and one boundary source of the other type
++  random      `uifo(3, random=True, random_seed=seed)`, as the public fixture was drawn, with
++              random design values; half of the seeds give a balanced homodyne readout
++
++The public fixture stores the `centers` and `boundaries` of the generator call it came from,
++which is how the kinds `homodyne` and `swapped` rebuild it with one thing changed. Design values
++of parts that exist in the public fixture are taken from there.
++"""
++import json, os, sys
++from pathlib import Path
++
++os.environ["JAX_PLATFORMS"] = "cpu"; os.environ["JAX_ENABLE_X64"] = "true"
++upstream, out, kind = Path(sys.argv[1]).resolve(), Path(sys.argv[2]), sys.argv[3]
++seed = int(sys.argv[4]) if len(sys.argv) > 4 else 0
++sys.path.insert(0, str(upstream))
++import jax, jax.numpy as jnp, numpy as np
++import differometor as df
++from differometor.setups import constrain_inter_grid_cell_spaces, uifo
++
++PROPERTIES = ["reflectivity", "tuning", "db", "angle", "power", "mass", "length"]
++data_dir = upstream / "examples" / "data"
++public = json.loads((data_dir / "uifo_800_3000.json").read_text())
++frequencies = json.loads((data_dir / "uifo_800_3000_test_data.json").read_text())["frequencies"]
++rng = np.random.default_rng(seed)
++section = lambda data, name: data["nodes" if name in data["nodes"] else "edges"]
++
++
++def generated(centers, boundaries, random=False):
++    setup, _, centers, boundaries = uifo(3, centers=centers, boundaries=boundaries, random=random, random_seed=seed, verbose=True)
++    data = setup.to_data()
++    data["centers"] = {key: list(value) for key, value in centers.items()}
++    data["boundaries"] = dict(boundaries)
++    return json.loads(json.dumps(data))  # plain JSON types, as a stored fixture has them
++
++
++def take_public_values(data):
++    """Design values of the parts that the public fixture has as well."""
++    for part in ("nodes", "edges"):
++        for name, item in data[part].items():
++            original = public[part].get(name)
++            if original is not None and original.get("component") == item.get("component"):
++                for prop in item["properties"]:
++                    if prop in original["properties"]:
++                        item["properties"][prop] = original["properties"][prop]
++
++
++def set_design_values(data, change):
++    """Give every design variable `change(property, old value)`; grouped lengths keep one value."""
++    setup = df.Setup.from_data(data)
++    for pair in constrain_inter_grid_cell_spaces(setup.parameters, PROPERTIES):
++        members = pair if isinstance(pair[0], list) else [pair]
++        name, prop = members[0]
++        value = float(change(prop, section(data, name)[name]["properties"][prop]))
++        for name, prop in members:
++            section(data, name)[name]["properties"][prop] = value
++
++
++def slightly(prop, value):
++    if prop == "reflectivity":  # stays inside (0, 1): a small step of the logit
++        value = min(max(value, 1e-12), 1 - 1e-12)
++        return 1 / (1 + (1 / value - 1) * np.exp(rng.normal(0, 0.05)))
++    if prop in ("tuning", "angle"):
++        return value + rng.normal(0, 2.0)
++    return value * np.exp(rng.normal(0, 0.05))
++
++
++def anything(prop, value):
++    return {
++        "reflectivity": lambda: [rng.uniform(0, 1), 10 ** rng.uniform(-9, -1), 1 - 10 ** rng.uniform(-6, -1)][rng.integers(3)],
++        "tuning": lambda: rng.uniform(-360, 360),
++        "db": lambda: rng.uniform(0, 10),
++        "angle": lambda: rng.uniform(0, 360),
++        "power": lambda: 10 ** rng.uniform(-6, 2.3),
++        "mass": lambda: 10 ** rng.uniform(-2, 2.3),
++        "length": lambda: rng.uniform(0, 4000),
++    }[prop]()
++
++
++if kind == "perturbed":
++    data = json.loads(json.dumps(public))
++    set_design_values(data, slightly)
++elif kind == "homodyne":
++    readout = next(key for key, value in public["boundaries"].items() if value == "detector")
++    data = generated(public["centers"], dict(public["boundaries"], **{readout: "balanced_homodyne"}))
++    take_public_values(data)
++elif kind == "swapped":
++    centers, boundaries = dict(public["centers"]), dict(public["boundaries"])
++    center = sorted(centers)[seed % len(centers)]
++    centers[center] = ["directional_beamsplitter" if centers[center][0] == "beamsplitter" else "beamsplitter", centers[center][1]]
++    sources = sorted(key for key, value in boundaries.items() if value in ("laser", "squeezer"))
++    source = sources[seed % len(sources)]
++    boundaries[source] = "squeezer" if boundaries[source] == "laser" else "laser"
++    data = generated(centers, boundaries)
++    take_public_values(data)
++    print(f"center {center} is now a {centers[center][0]}, boundary {source} a {boundaries[source]}")
++elif kind == "random":
++    data = generated(None, None, random=True)
++    set_design_values(data, anything)
++else:
++    sys.exit(__doc__)
++
++# Reference sensitivities with the simulator of the upstream tree, as benchmark.py reads them out.
++setup = df.Setup.from_data(data)
++pairs = constrain_inter_grid_cell_spaces(setup.parameters, PROPERTIES)
++values = [section(data, (pair if isinstance(pair[0], str) else pair[0])[0])[(pair if isinstance(pair[0], str) else pair[0])[0]]["properties"][(pair if isinstance(pair[0], str) else pair[0])[1]] for pair in pairs]
++arrays, ports, *_ = df.run_build_step(setup, [("f", "frequency")], jnp.asarray(frequencies, dtype=jnp.float64), pairs)
++arrays["optimized_parameters"] = jnp.asarray(values, dtype=jnp.float64)
++ports = jnp.asarray(ports)
++
++
++@jax.jit
++def sensitivity(arrays):
++    carrier, signal, noise = df.simulate(**arrays)
++    signals = df.signal_detector(carrier, signal)[ports]
++    detected = signals.squeeze() if ports.shape[0] == 1 else signals[0] - signals[1]
++    return (noise / jnp.abs(detected)).squeeze()
++
++
++reference = np.asarray(sensitivity(arrays))
++if reference.shape != (len(frequencies),) or not (np.isfinite(reference).all() and (reference > 0).all()):
++    sys.exit(f"no usable reference for this variant: shape {reference.shape}, finite {bool(np.isfinite(reference).all())}")
++out.mkdir(parents=True, exist_ok=True)
++(out / "uifo_800_3000.json").write_text(json.dumps(data))
++(out / "uifo_800_3000_test_data.json").write_text(json.dumps({"frequencies": frequencies, "sensitivities": reference.tolist()}))
++components = {}
++for item in data["nodes"].values():
++    components[item["component"]] = components.get(item["component"], 0) + 1
++print(f"{kind} (seed {seed}): {len(pairs)} design variables, readout with {ports.shape[0]} port(s), simulator {df.__file__}")
++print(f"components: {dict(sorted(components.items()))}")
++print(f"sensitivity {reference.min():.3e} to {reference.max():.3e}, written to {out}")
+diff --git a/runs/noel/variant_run.py b/runs/noel/variant_run.py
+new file mode 100644
+index 0000000..d4131c1
+--- /dev/null
++++ b/runs/noel/variant_run.py
+@@ -0,0 +1,63 @@
++"""Run benchmark.py on a variant fixture made by runs/noel/variant_fixture.py.
++
++    python runs/noel/variant_run.py <repo> <variant folder> [--image IMAGE] [--repeats N] [--keep FOLDER]
++
++benchmark.py reads the two files in `examples/data` and checks their hashes, as a guard against
++changed inputs. For a variant this script copies the repo to a temporary folder, puts the
++variant files there and enters their hashes into the copy of benchmark.py. Nothing in the repo
++changes. With `--image` the benchmark runs in that Docker image with `--cpus 1`, with the variant
++files and the adapted benchmark.py mounted over the ones in the image.
++
++Prints the first-run total, the warm median, the sensitivity error against the variant's
++reference and the result of the gradient check, and exits with the benchmark's status.
++"""
++import hashlib, json, os, re, shutil, subprocess, sys, tempfile
++from pathlib import Path
++
++repo, variant = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
++option = lambda name, default=None: sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
++image, repeats, keep = option("--image"), option("--repeats", "3"), option("--keep")
++names = ("uifo_800_3000.json", "uifo_800_3000_test_data.json")
++hashes = [hashlib.sha256((variant / name).read_bytes()).hexdigest() for name in names]
++source = (repo / "benchmark.py").read_text()
++for constant, digest in zip(("FIXTURE_SHA256", "REFERENCE_SHA256"), hashes):
++    source, count = re.subn(rf'^{constant} = "[0-9a-f]{{64}}"$', f'{constant} = "{digest}"', source, flags=re.M)
++    assert count == 1, constant
++
++with tempfile.TemporaryDirectory() as temporary:
++    work = Path(temporary)
++    if image:
++        (work / "benchmark.py").write_text(source)
++        (work / "out").mkdir()
++        mounts = [f"{work / 'benchmark.py'}:/app/benchmark.py:ro", f"{work / 'out'}:/out"]
++        mounts += [f"{variant / name}:/app/examples/data/{name}:ro" for name in names]
++        command = ["docker", "run", "--rm", "--cpus", "1"] + [x for mount in mounts for x in ("-v", mount)] + [image, "--repeats", repeats]
++        report, cwd = work / "out" / "benchmark-docker.json", None
++    else:
++        tree = work / "repo"
++        shutil.copytree(repo, tree, ignore=shutil.ignore_patterns(".git", ".venv", "runs", "__pycache__", "*.egg-info", "benchmark*.json", "benchmark*.png", "*.npz"))
++        (tree / "benchmark.py").write_text(source)
++        for name in names:
++            shutil.copyfile(variant / name, tree / "examples" / "data" / name)
++        report, cwd = work / "report.json", tree
++        command = [sys.executable, "benchmark.py", "--repeats", repeats, "--output", str(report)]
++    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
++    if result.returncode != 0 or not report.exists():
++        print((result.stdout + result.stderr)[-3000:])
++        sys.exit(f"benchmark failed on {variant.name} (exit status {result.returncode})")
++    data = json.loads(report.read_text())
++    if keep:
++        Path(keep).mkdir(parents=True, exist_ok=True)
++        shutil.copyfile(report, Path(keep) / f"{variant.name}{'-docker' if image else ''}.json")
++
++timing, validation = data["timing_seconds"], data["validation"]
++check = validation["gradient_check"]
++differences = ", ".join(f"{item['central_difference']:.6e}" for item in check["finite_differences"])
++print(
++    f"{variant.name}{' (Docker, 1 CPU)' if image else ''}: PASS, first run {timing['end_to_end'] * 1e3:.1f} ms, warm {timing['runtime_median'] * 1e3:.1f} ms, "
++    f"{data['inputs']['gradient_parameter_count']} design variables, signal {validation['output_shapes']['signal']}"
++)
++print(
++    f"   max |ln s - ln ref| {validation['max_absolute_log_sensitivity_error']:.3e} (limit 1e-5), "
++    f"gradient check {check['parameter']}: autodiff {check['autodiff']:.6e}, finite differences {differences}"
++)
+-- 
+2.53.0
+
