@@ -165,6 +165,8 @@ In Runde 8 gemessen und nicht übernommen:
 
 Am 21.11. um 14:21 mit dem Stand `b6b1119` wiederholt: `PASS`, dieselben Abweichungen gegen aarch64, `test_pack.py` und `test_sparse.py` «OK».
 
+Am 21.11. um 15:50 mit dem Stand `8cb5eff` (Runde 9, Image `differometor-bench:x86-9`): Original-Fixture `PASS` (Fehler 5,374e-06), Homodyne-Variante des Fixtures `PASS` (8,3e-08 gegen die Referenz aus dem Original-Code), Zufalls-UIFO Seed 0 mit Homodyne `PASS` (7,4e-11), leicht verändertes Fixture `PASS` (8,5e-10), `test_variants.py --quick` «OK» (`|dln s|` 4,2e-11).
+
 Die Zeiten aus der Emulation sagen nichts aus (Erstlauf 2,2 s, davon 0,77 s Sensitivity-Kompilation). Rosetta bietet auch nicht denselben Befehlssatz wie ein Xeon (kein AVX-512). Auf echter Hardware können darum andere Rechenkerne von OpenBLAS und XLA laufen. Zu erwarten sind Unterschiede auf Rundungsniveau, bei einer Toleranz von 1e-5 und einem Abstand von 4,6e-6.
 
 ```bash
