@@ -1,65 +1,67 @@
-# SX2 — `jax_disable_most_optimizations` (Grauzone, NUR Vorbereitung)
+# SX2 — `jax_disable_most_optimizations` (deferred / NOT submission)
 
-**Status:** Vorbereitung/Experiment. **Kein Merge, keine Änderung an `ac7aedc`/`submission`.**
-Feyer-Freigabe nötig, weil der Schalter **global** wirkt und **nicht** in
-`environment.xla_flags`/Benchmark-Report auftaucht (Offenlegungsfrage).
+**Status:** validierter, **nicht aktiver** Kandidat. **Kein Merge, keine Änderung an
+`ac7aedc`/`submission`.** Tag: `s-group-d-det-superlu-sx2` (Commit `4e63631`, Branch `track/10-sx2`).
+**Feyer-Freigabe steht aus** — ohne sie wird SX2 nicht eingereicht (Lead-Entscheid B, 03:29 UTC).
 
 ## Idee
-
 In `differometor/__init__.py` **vor** dem Backend-Init:
-
 ```python
 import jax as _jax
-
 _jax.config.update("jax_disable_most_optimizations", True)
 ```
+Wirkung in jax 0.9.0 (verifiziert): `xla_backend_optimization_level=0`,
+`xla_llvm_disable_expensive_passes=True`, `xla_test_all_input_layouts=False` — die
+Optimierungspipeline wird global zurückgefahren; der Graph wird weiterhin von XLA kompiliert und in
+double precision ausgeführt, alle 101 Frequenzen / 193 Variablen werden berechnet.
+**Grauzone:** interne/experimentelle JAX-Config (`jax._src.compiler`), global wirkend, erscheint
+**nicht** in `environment.xla_flags`/Benchmark-Report → Offenlegung nötig; Regel v4 (Compiler-Optionen
+via `XLA_FLAGS` + Feyer-Freigabe vorher) ist **nicht erfüllt**.
 
-Wirkung in jax 0.9.0 (verifiziert über `jax._src.compiler._DISABLE_MOST_OPTIMIZATIONS`):
-`xla_backend_optimization_level = 0`, `xla_llvm_disable_expensive_passes = True`,
-`xla_test_all_input_layouts = False` — d. h. die JAX/XLA-Optimierungspipeline wird global
-zurückgefahren. Das Flag ist in JAX eine **interne/experimentelle Config-Option**
-(`jax._src.compiler.bool_flag("jax_disable_most_optimizations", ...)`, auch per
-`JAX_DISABLE_MOST_OPTIMIZATIONS=1` setzbar); es ist semantikerhaltend (nur Optimierungen entfallen),
-aber es ist **kein** offizielles Feature und erscheint nicht im Benchmark-Report.
+## Offizielle Messung (00, Kern 14, leere Maschine, `--cpus 1`, 10 rep, 03:30–03:36 UTC)
+| Lauf | end_to_end | compile | warm_median | err |
+|---|---:|---:|---:|---|
+| **SX2 `S-sx2-c01`** (4e63631, warm) | **0,691 s** | **0,194 s** | 0,153 s | 5,374248516e-06 |
+| **SX2 `S-sx2-c02`** | **0,681 s** | **0,185 s** | 0,147 s | 5,374248516e-06 |
+| **SX2 `S-sx2-cold`** (COLD=1) | **0,920 s** | 0,209 s | 0,149 s | 5,374248516e-06 |
+| Referenz Submission `ac7aedc` (offiziell) | 0,762 / 0,769 s | 0,268 / 0,272 s | 0,145 s | 5,374248516e-06 |
+| Referenz `ac7aedc` kalt | 0,995 s | 0,293 s | 0,151 s | 5,374248516e-06 |
 
-## Smoke-Messung (spontan, Kern 12, `--cpus 1 --repeats 3`, keine offizielle Messung)
+**Delta:** warm ≈ **−0,080 s (−10,4 %)**, kalt ≈ **−0,075 s (−7,5 %)**; compile 0,27 → 0,19 s
+(hauptsächlich `sensitivity_compile` −0,060 s, `gradient_compile` −0,025 s), imports/runtime unverändert.
 
-| | `ac7aedc` (A) | **SX2 (B)** | Δ |
-|---|---:|---:|---:|
-| e2e | 0,7575 / 0,7536 s | **0,6757 / 0,6759 s** | **−0,080 s (−10,6 %)** |
-| forward_compile | 0,0077 / 0,0074 | 0,0076 / 0,0075 | ≈0 |
-| **sensitivity_compile** | 0,1397 / 0,1468 | **0,0819 / 0,0831** | **−0,060 s** |
-| **gradient_compile** | 0,0744 / 0,0722 | **0,0506 / 0,0474** | **−0,025 s** |
-| imports | 0,2713 / 0,2612 | 0,2679 / 0,2686 | ≈0 |
-| warm runtime | 0,1383 / 0,1486 | 0,1428 / 0,1321 | Rauschen |
+## Unabhängige A/B (`ms_gate`, 10 warme + 4 kalte Paare, Kern 14, MS-AB PASS)
+| Größe | A = `ac7aedc` | B = SX2 `4e63631` | Δ | Urteil |
+|---|---:|---:|---:|---|
+| warm e2e median | 0,7623 s (σ 0,0128) | **0,6833 s (σ 0,0052)** | **−0,0790 s (−10,36 %)** | **GAIN** |
+| kalt e2e median | 0,9877 s (σ 0,0011) | **0,8998 s (σ 0,0066)** | **−0,0879 s (−8,90 %)** | **GAIN** |
 
-**Arrays** (SX2 vs `ac7aedc`): carrier/signal/noise/powers/parameters/frequencies **bitgleich**;
-sensitivity max_abs 9,2e-41; gradient max_abs 1,3e-10 (rel ≈1,9e-15, letzte Bits).
-**Determinismus:** SX2-Lauf1 vs Lauf2 bitgleich. **Validation:** finite / upstream-sens / FD **PASS**,
-`max|ln S − ln S_ref|` = 5,374e-06 unverändert.
+Report: `measurements/ms/sx2-ac7aedc/ab-report.md`.
 
-## Offenlegungstext (für Feyer-Frage, EN)
+## Korrektheit / Compliance
+- Arrays vs `ac7aedc`: carrier/signal/noise/powers/parameters/frequencies **bitgleich**;
+  sensitivity max_abs 9,2e-41, gradient max_abs 1,3e-10 (rel ≈1,9e-15, letzte Bits durch
+  Optimierungsreihenfolge). Lauf1 vs Lauf2 bitgleich (deterministisch).
+- Harness-Validierung: finite / upstream-sensitivity / FD **PASS**; `max|ln S − ln S_ref|` =
+  **5,374248516e-06 unverändert** (Limit 1e-5). `benchmark.py`/Fixtures/requirements unverändert;
+  Diff nur `differometor/__init__.py` (+8) und diese Doku.
+- **Einziger offener Punkt: Feyer-Freigabe + Offenlegung des globalen Flags.**
 
-> **Implementation note (SX2, experimental):** the candidate additionally sets the JAX internal
-> configuration flag `jax_disable_most_optimizations=True` before the backend is initialized. In
-> JAX 0.9.0 this configures the compiler with `xla_backend_optimization_level=0` and disables
-> LLVM's expensive passes. It removes optimisation work only: the simulation is still compiled and
-> executed by XLA in double precision, all 101 frequencies and 193 variables are evaluated, and the
-> compiled-graph semantics are unchanged. Numerical outputs are bit-identical for carrier, signal,
-> noise, powers and parameters; sensitivity/gradient differ only in the last bits
-> (gradient max |Δ| = 1.3e-10, rel. L2 ≈ 2e-15) and the FD/sensitivity checks pass. The flag does not
-> appear in the benchmark's `environment.xla_flags` report because it is a JAX config option, not an
-> XLA_FLAGS entry; it is set in `differometor/__init__.py` and is therefore part of the submitted code.
+## Offenlegungstext (EN, für Feyer-Frage / SUBMISSION.md „deferred" Abschnitt)
+> **Deferred experimental variant (SX2, not part of the submitted result):** an optional variant sets
+> the JAX internal configuration flag `jax_disable_most_optimizations=True` before backend
+> initialisation. In JAX 0.9.0 this configures the compiler with `xla_backend_optimization_level=0`
+> and disables LLVM's expensive passes. It removes optimisation work only: the simulation is still
+> compiled and executed by XLA in double precision, all 101 frequencies and all 193 design variables
+> are evaluated, and the compiled graph semantics are unchanged. Numerical outputs are bit-identical
+> for carrier, signal, noise, powers, parameters and frequencies; sensitivity and gradient differ only
+> in the last bits (gradient max |Δ| = 1.3e-10, relative L2 ≈ 2e-15) and all sensitivity/finite-
+> difference checks pass. Measured (one logical CPU, isolated core, 10 repeats): **0.691/0.681 s warm,
+> 0.920 s cold** vs 0.762/0.769 s / 0.995 s for the submitted variant (−10.4 % / −7.5 %). This variant
+> is **not** part of the submission; it is documented for transparency and awaits team approval.
 
-## Risiken
-
-- **Grauzone:** internes JAX-Flag (`jax._src...`), kein dokumentiertes API; kann in anderen
-  jax-Versionen fehlen/anders heißen (in 0.9.0 vorhanden, gepinnt in requirements.txt).
-- Global für **alle** Compilations im Prozess (auch Jury-Fremdcode), nicht auf differometor begrenzt.
-- Nicht im Report sichtbar → nur über Code-Diff/Offenlegung nachvollziehbar.
-- Warm-Runtime unverändert (Codegen weniger optimiert, aber Graph ist klein) → kein Exec-Risiko.
-
-## Nächster Schritt
-
-Offizielles A/B (10 warm + 4 kalt, Kern 14, Fenster von 00) + Gate (Δerr, bitgleich, gradient rel_L2);
-bei PASS eigener Tag `s-group-d-det-superlu-sx2` (nicht in der Hauptlinie), dann Feyer-Frage.
+## „Ready to swap"-Paket
+`/root/faster-physics/submission-sx2-ready/` (+ `submission-sx2-ready.tar.gz`, SHA256 in
+`/root/states/`): Code-Tar/Bundle des Tags, offizielle Messartefakte, dieses Proposal, Disclosure-Text,
+DEFERRED-VARIANTS-Katalog, SHA256SUMS. Aktivierung erfordert nur: Tag-Wechsel auf
+`s-group-d-det-superlu-sx2` + Repack + Feyer-Freigabe.
