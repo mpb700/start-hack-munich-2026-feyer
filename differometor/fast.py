@@ -12,7 +12,8 @@ How it works
   numbers (value + derivative with respect to every real input). No XLA compilation and
   no hand-written derivatives of the physics formulas are needed.
 - The carrier system and the signal system of every frequency are assembled as sparse
-  CSC matrices and factorized with SuperLU (`scipy.sparse.linalg.splu`).
+  CSC matrices and factorized with SuperLU, loaded directly from scipy's compiled
+  `_superlu` extension (`differometor.host_superlu`) so that `scipy` is never imported.
 - The quantum noise of the (single) detector is `Re(y^H N y)` with `y = S^-H w`; the
   same solve is reused as the adjoint helper for the gradient.
 - Reverse mode is written by hand. Cotangents follow JAX's convention for complex
@@ -27,8 +28,7 @@ callback rebuilds the sparsity plan and refactorizes the matrices from them.
 import jax
 import jax.numpy as jnp
 import numpy as np
-import scipy.sparse as sp
-import scipy.sparse.linalg as spl
+from differometor.host_superlu import CSC as _HostCSC, splu as _host_splu
 
 import differometor.components as components
 from differometor.components import UNIT_VACUUM, H_PLANCK, F0
@@ -199,8 +199,7 @@ class _EntryBlock:
                 if members.size:
                     self.groups.append((int(k), members, varying))
         # Scatter from entries to (call, output) slots; several entries may share a slot.
-        flat = self.outputs[0] * 4 + self.outputs[1]
-        self.scatter = sp.csr_matrix((np.ones(flat.size), (np.arange(flat.size), flat)), shape=(flat.size, calls * 4))
+        self.flat = self.outputs[0] * 4 + self.outputs[1]
 
     def _gather(self, values):
         return values[:, self.outputs[0], self.outputs[1]]
@@ -228,7 +227,9 @@ class _EntryBlock:
     def back(self, tape, entries_bar, parameter_count):
         """entries_bar: (R, E) -> real parameter cotangent summed over the rows (P,)."""
         rows, calls = entries_bar.shape[0], self.inputs.shape[0]
-        outputs_bar = np.asarray(self.scatter.T @ entries_bar.T).T.reshape(rows, calls, 4)
+        outputs_bar = np.zeros((rows, calls * 4), dtype=entries_bar.dtype)
+        np.add.at(outputs_bar, (np.arange(rows)[:, None], self.flat[None, :]), entries_bar)
+        outputs_bar = outputs_bar.reshape(rows, calls, 4)
         parameters_bar = np.zeros(parameter_count)
         for (function_index, members, varying), jacobian in zip(self.groups, tape):
             if varying:
@@ -376,7 +377,7 @@ class SystemPlan:
         n = self.n
         M = self.carrier_base.astype(complex)
         M[self.cmi[0][self.carrier_live], self.cmi[1][self.carrier_live]] = carrier_entries[self.carrier_live]
-        A = sp.csc_matrix((M[self.carrier_rows, self.carrier_cols], self.carrier_rows, self.carrier_ptr), shape=(n, n))
+        A = _HostCSC(M[self.carrier_rows, self.carrier_cols], self.carrier_rows, self.carrier_ptr, (n, n))
         return A, M[:, -1]
 
     def signal_values(self, signal_entries, carrier):
@@ -392,8 +393,8 @@ class SystemPlan:
 
     def _set_order(self, values_row):
         """Column order from COLAMD on one matrix, reused for all frequencies (shared pattern)."""
-        first = sp.csc_matrix((values_row[self.in_matrix], self.matrix_rows, self.matrix_ptr), shape=(self.m, self.m))
-        order = np.argsort(spl.splu(first).perm_c)
+        first = _HostCSC(values_row[self.in_matrix], self.matrix_rows, self.matrix_ptr, (self.m, self.m))
+        order = np.argsort(_host_splu(first).perm_c)
         counts = np.diff(self.matrix_ptr)[order]
         self.ordered_ptr = np.concatenate([[0], np.cumsum(counts)])
         gather = np.repeat(self.matrix_ptr[order] - self.ordered_ptr[:-1], counts) + np.arange(self.ordered_ptr[-1])
@@ -404,8 +405,8 @@ class SystemPlan:
     def signal_lu(self, values_row):
         if self.order is None:
             self._set_order(values_row)
-        B = sp.csc_matrix((values_row[self.ordered_values], self.ordered_rows, self.ordered_ptr), shape=(self.m, self.m))
-        return _OrderedLU(spl.splu(B, permc_spec="NATURAL"), self.order)
+        B = _HostCSC(values_row[self.ordered_values], self.ordered_rows, self.ordered_ptr, (self.m, self.m))
+        return _OrderedLU(_host_splu(B, permc_spec="NATURAL"), self.order)
 
     def noise_values(self, noise_entries):
         F = noise_entries.shape[0]
@@ -450,7 +451,7 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
     """
     m = plan.m
     carrier_matrix, carrier_rhs = plan.carrier_matrix(carrier_entries)
-    carrier = spl.splu(carrier_matrix).solve(carrier_rhs)
+    carrier = _host_splu(carrier_matrix).solve(carrier_rhs)
     V, _ = plan.signal_values(signal_entries, carrier)
     w = plan.detector_weights(carrier)
     N = plan.noise_values(noise_entries)
@@ -526,7 +527,7 @@ def backward(plan, carrier_entries, signal_entries, carrier, X, noise, Y, MU, Z,
 
     s = plan.selection
     carrier_bar += w_bar[:n] * s[:n] + np.conj(w_bar[n : 2 * n]) * s[n : 2 * n]
-    lam_c = spl.splu(carrier_matrix).solve(carrier_bar, trans="T")
+    lam_c = _host_splu(carrier_matrix).solve(carrier_bar, trans="T")
     r, c = plan.cmi
     carrier_entries_bar = np.where(c == n, lam_c[r], -lam_c[r] * carrier[np.minimum(c, n - 1)])
     carrier_entries_bar = np.where(plan.carrier_live, carrier_entries_bar, 0)
