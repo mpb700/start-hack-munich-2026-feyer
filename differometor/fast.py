@@ -1,9 +1,10 @@
 """
 Fast host-side simulation path: sparse LU solves with SuperLU and a hand-written adjoint.
 
-`differometor.simulate.simulate` dispatches here for setups without parameter linking, with
-exactly one quantum noise detector (a `qnoised` or a balanced homodyne detector `qhd`) and a
-single carrier operating point. Everything else uses the original JAX implementation.
+`differometor.simulate.simulate` dispatches here for setups with exactly one quantum noise
+detector (a `qnoised` or a balanced homodyne detector `qhd`) and a single carrier operating
+point. Parameter links are covered for the linking functions listed in `LINK_RULES` (`jnp.sqrt`,
+which is what amplitude modulation uses). Everything else uses the original JAX implementation.
 A balanced homodyne detector reads two ports, the second one with a phase factor from its
 `phase` parameter (`EntryPlan.selection`); the phase may be a design variable.
 
@@ -436,6 +437,20 @@ class _EntryBlock:
         return parameters_bar
 
 
+# Linking functions (derived parameters, e.g. a signal amplitude that follows `sqrt(laser power)`)
+# that the fast path evaluates on the host: the NumPy value and the derivative as a function of
+# input and value. Setups with any other linking function use the original JAX implementation.
+LINK_RULES = ((jnp.sqrt, np.sqrt, lambda x, y: 0.5 / y),)
+
+
+def _link_rule(function):
+    """(value, derivative) for a linking function of `LINK_RULES`, None for any other function."""
+    for known, value, derivative in LINK_RULES:
+        if function is known:
+            return value, derivative
+    return None
+
+
 class EntryPlan:
     """Parameter expansion and component evaluation (mirrors the start of `simulate`)."""
 
@@ -454,6 +469,14 @@ class EntryPlan:
             if np.any(np.imag(values) != 0):
                 raise ValueError("fast path requires real changing values")
         changing = self.signal_changing_indices
+        # Parameter links: slot `link_targets[i]` gets `rule(slot link_sources[i])`.
+        self.link_sources = np.asarray(A["linked_indices"], np.intp).reshape(-1)
+        self.link_targets = np.asarray(A["indices_to_link"], np.intp).reshape(-1)
+        self.link_rules = []
+        if self.link_sources.size:
+            from differometor.build import LINKING_FUNCTIONS
+
+            self.link_rules = [_link_rule(LINKING_FUNCTIONS[i]) for i in np.asarray(A["linking_function_indices"]).reshape(-1)]
         # Balanced homodyne detector (qhd): the entries `qhd_places` of the noise detector's
         # selection vector carry the factor exp(1j * phase), phase in degrees (`selection`).
         self.qhd_parameter_indices = np.asarray(A["qhd_parameter_indices"], np.intp).reshape(-1)
@@ -464,6 +487,10 @@ class EntryPlan:
         # Parameter slots whose derivative reaches a design variable (see `pullback`).
         differentiable = np.zeros(self.base.size, bool)
         differentiable[self.optimized_parameter_indices] = True
+        differentiable[self.link_targets] = differentiable[self.link_sources]
+        # A phase that follows a design variable through a link needs that cotangent as well.
+        if self.link_targets.size and np.isin(self.qhd_parameter_indices, self.link_targets[differentiable[self.link_targets]]).any():
+            self.phase_is_design_variable = True
         differentiable[self.carrier_changing_indices] = False
         differentiable[self.signal_changing_indices] = False
         block = lambda name, changing=(): _EntryBlock(
@@ -472,9 +499,18 @@ class EntryPlan:
         self.carrier, self.signal, self.noise = block("carrier"), block("signal", changing), block("noise", changing)
 
     def _design_row(self, optimized_parameters):
-        """The parameter row with the design variables in place, before the sweeps."""
+        """The parameter row with the design variables in place, before the links."""
         P = self.base.copy()
         P[self.optimized_parameter_indices] = np.asarray(optimized_parameters, float)[self.optimized_value_indices]
+        return P
+
+    def _row(self, optimized_parameters):
+        """The parameter row with design variables and linked parameters, before the sweeps."""
+        P = self._design_row(optimized_parameters)
+        if self.link_targets.size:
+            # All links read the row as it is before any of them writes (as in `simulate_jax`).
+            sources = P[self.link_sources]
+            P[self.link_targets] = [value(x) for (value, _), x in zip(self.link_rules, sources)]
         return P
 
     def selection(self, optimized_parameters):
@@ -485,13 +521,13 @@ class EntryPlan:
         """
         selection = self.selection_base
         if self.qhd_parameter_indices.size:
-            phases = np.exp(1j * np.radians(self._design_row(optimized_parameters)[self.qhd_parameter_indices]))
+            phases = np.exp(1j * np.radians(self._row(optimized_parameters)[self.qhd_parameter_indices]))
             selection = selection.astype(complex)
             np.multiply.at(selection, self.qhd_places, phases)
         return selection
 
     def _rows(self, optimized_parameters):
-        P = self._design_row(optimized_parameters)
+        P = self._row(optimized_parameters)
         carrier_rows = np.tile(P, (self.carrier_changing_values.shape[1], 1))
         carrier_rows[:, self.carrier_changing_indices] = np.real(self.carrier_changing_values).T
         signal_rows = np.tile(carrier_rows[0], (self.signal_changing_values.shape[1], 1))
@@ -530,6 +566,14 @@ class EntryPlan:
             places = self.qhd_places
             phase_bar = (selection_bar[places] * 1j * self.selection(optimized_parameters)[places]).real * (np.pi / 180)
             np.add.at(P_bar, self.qhd_parameter_indices, phase_bar)
+        if self.link_targets.size:
+            # target = rule(source): the cotangent of a linked slot goes to its source.
+            sources = self._design_row(optimized_parameters)[self.link_sources]
+            targets_bar = P_bar[self.link_targets]
+            P_bar[self.link_targets] = 0.0  # overwritten by the links
+            with np.errstate(divide="ignore", invalid="ignore"):
+                slopes = np.array([derivative(x, value(x)) for (value, derivative), x in zip(self.link_rules, sources)])
+                np.add.at(P_bar, self.link_sources, slopes * targets_bar)
         return np.bincount(self.optimized_value_indices, P_bar[self.optimized_parameter_indices], value_count)
 
 
@@ -1363,6 +1407,9 @@ HOST_KEYS = (
     "noise_selection_vectors",
     "qhd_parameter_indices",
     "qhd_placing_indices",
+    "linked_indices",
+    "linking_function_indices",
+    "indices_to_link",
     "carrier_function_input_indices",
     "carrier_function_indices",
     "carrier_output_indices",
@@ -1380,15 +1427,28 @@ HOST_KEYS = (
 )
 
 
+def _links_supported(arrays):
+    """Parameter links are covered when their functions are known at trace time and in `LINK_RULES`."""
+    if arrays["linked_indices"].shape[0] == 0:
+        return True
+    indices = arrays["linking_function_indices"]
+    if not isinstance(indices, np.ndarray):  # a traced index array: the functions are not known here
+        return False
+    from differometor.build import LINKING_FUNCTIONS
+
+    return all(0 <= i < len(LINKING_FUNCTIONS) and _link_rule(LINKING_FUNCTIONS[i]) is not None for i in indices.reshape(-1).tolist())
+
+
 def supports(arrays):
     """
-    Static (shape/dtype only) check whether the fast path covers these `simulate` arguments:
-    no parameter links, exactly one quantum noise detector (a `qnoised` or a balanced homodyne
-    detector `qhd`), a single carrier operating point and real design variables.
+    Static check (shapes, dtypes and the linking functions) whether the fast path covers these
+    `simulate` arguments: exactly one quantum noise detector (a `qnoised` or a balanced homodyne
+    detector `qhd`), a single carrier operating point, real design variables and only parameter
+    links whose functions are in `LINK_RULES`.
     """
     optimized = arrays["optimized_parameters"]
     return (
-        arrays["linked_indices"].shape[0] == 0
+        _links_supported(arrays)
         and arrays["noise_selection_vectors"].shape[0] == 1
         and arrays["carrier_changing_values"].ndim == 2
         and arrays["carrier_changing_values"].shape[1] == 1
