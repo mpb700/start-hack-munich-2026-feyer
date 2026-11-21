@@ -8,11 +8,12 @@ first use. All names stay importable from `differometor.simulate`.
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import lax, vmap, jit
 
 from differometor.build import LINKING_FUNCTIONS
 from differometor.components import FUNCTIONS, UNIT_VACUUM, H_PLANCK, F0
-from differometor.fast import SparseMatrix
+from differometor.fast import SparseMatrix, StaticArray
 
 
 jax.config.update("jax_enable_x64", True)
@@ -314,6 +315,23 @@ def simulate_jax(
         matrix.dense() if isinstance(matrix, SparseMatrix) else matrix
         for matrix in (carrier_matrix, signal_matrix, noise_matrix)
     )
+    # Index arrays from the build step are static NumPy arrays (`StaticArray`); this path maps over
+    # some of them and indexes with all of them, so they become ordinary JAX arrays here.
+    dynamic = lambda array: jnp.asarray(np.asarray(array)) if isinstance(array, StaticArray) else array
+    optimized_parameter_indices, optimized_value_indices = dynamic(optimized_parameter_indices), dynamic(optimized_value_indices)
+    carrier_changing_parameter_indices = dynamic(carrier_changing_parameter_indices)
+    signal_changing_parameter_indices = dynamic(signal_changing_parameter_indices)
+    qhd_parameter_indices, qhd_placing_indices = dynamic(qhd_parameter_indices), dynamic(qhd_placing_indices)
+    linked_indices, linking_function_indices = dynamic(linked_indices), dynamic(linking_function_indices)
+    indices_to_link = dynamic(indices_to_link)
+    carrier_function_input_indices, carrier_function_indices = dynamic(carrier_function_input_indices), dynamic(carrier_function_indices)
+    carrier_output_indices, carrier_matrix_indices = dynamic(carrier_output_indices), dynamic(carrier_matrix_indices)
+    signal_function_input_indices, signal_function_indices = dynamic(signal_function_input_indices), dynamic(signal_function_indices)
+    signal_output_indices, signal_matrix_indices = dynamic(signal_output_indices), dynamic(signal_matrix_indices)
+    signal_carrier_indices = dynamic(signal_carrier_indices)
+    signal_carrier_placing_indices = dynamic(signal_carrier_placing_indices)
+    noise_function_input_indices, noise_function_indices = dynamic(noise_function_input_indices), dynamic(noise_function_indices)
+    noise_output_indices, noise_system_matrix_indices = dynamic(noise_output_indices), dynamic(noise_system_matrix_indices)
 
     # Insert optimized parameter values into the base parameter row.
     parameters = parameters.at[[0], optimized_parameter_indices].set(

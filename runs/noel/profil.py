@@ -52,8 +52,15 @@ if what == "build":
     sys.exit()
 
 arrays, ports, parameters = build_inputs()
+split = hasattr(fast, "_split_host")  # since round 8: static index arrays stay with the callbacks
 sparse = hasattr(fast, "_host_leaves")  # since round 6: sparse system matrices, every host array packed
-if sparse:
+host_backward = fast._host_backward
+if split:
+    static, layout, traced = fast._split_host(arrays)
+    host = [np.asarray(leaf) for leaf in traced]
+    host_forward = functools.partial(fast._host_forward, arrays["carrier_matrix"].shape[0], static, layout)
+    host_backward = functools.partial(fast._host_backward, static, layout)
+elif sparse:
     host = [np.asarray(leaf) for leaf in fast._host_leaves(arrays)]
     host_forward = functools.partial(fast._host_forward, arrays["carrier_matrix"].shape[0])
 else:
@@ -75,7 +82,7 @@ backward_keys = () if sparse else getattr(fast, "BACKWARD_KEYS", fast.HOST_KEYS)
 backward_host = [h for k, h in zip(fast.HOST_KEYS, host) if k in backward_keys]
 args = (p, *backward_host, carrier, signal, noise, *helpers, carrier_bar, signal_bar, noise_bar)
 for _ in range(2):
-    t = pc(); g = fast._host_backward(*args); t_bwd = pc() - t
+    t = pc(); g = host_backward(*args); t_bwd = pc() - t
 print("backward seconds", t_bwd)
 
 profile = cProfile.Profile()
@@ -84,7 +91,7 @@ for _ in range(5):
     if what == "forward":
         host_forward(p, *host)
     else:
-        fast._host_backward(*args)
+        host_backward(*args)
 profile.disable()
 stats = pstats.Stats(profile)
 stats.sort_stats("cumulative").print_stats(38)

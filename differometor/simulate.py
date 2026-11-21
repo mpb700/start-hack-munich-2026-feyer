@@ -100,6 +100,10 @@ def simulate(
     The three system matrices are `differometor.fast.SparseMatrix` objects (coordinate form), as
     `run_build_step` returns them. Dense arrays are accepted as well, but then the call takes
     `simulate_jax`; `SparseMatrix.from_dense` converts a concrete dense matrix.
+
+    The index arrays from `run_build_step` are `differometor.fast.StaticArray`s: read-only NumPy
+    arrays that JAX treats as structure, so they are constants of a compiled function. Ordinary
+    integer arrays work as well and are traced like any other argument.
     """
     arrays = dict(locals())
     if fast.supports(arrays):

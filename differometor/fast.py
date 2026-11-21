@@ -40,8 +40,9 @@ the first time costs a page fault per 4 kB. Therefore:
 - Both passes work on one block of frequencies at a time, which keeps the intermediate arrays
   small, and the component functions write their outputs straight into the matrix entries.
 - Every array that crosses a callback or program boundary also has a fixed cost (lowering,
-  compilation, one copy per call). The 28 small arrays the reverse pass needs therefore travel as
-  two packed residuals (`_pack`, `_unpack`).
+  compilation, one copy per call). The index arrays of a setup are therefore static
+  (`StaticArray`): JAX does not trace them and the callbacks get them directly. The remaining
+  small arrays the reverse pass needs travel as one packed residual (`_pack`, `_unpack`).
 """
 
 import functools
@@ -61,14 +62,77 @@ from differometor.components import UNIT_VACUUM, H_PLANCK, F0
 NOISE_SCALE = UNIT_VACUUM * H_PLANCK * F0 * 0.25
 
 
+class StaticArray(np.ndarray):
+    """
+    An integer array that belongs to the structure of a setup, not to its data: which parameter
+    feeds which function, which matrix entry a result goes to. The build step returns its index
+    arrays like this.
+
+    For JAX a StaticArray is a pytree node without leaves. A traced function does not get a
+    tracer for it but the array itself, so it is a constant of the compiled program, it never has
+    to be copied into a host callback, and it costs nothing per call. Different index arrays give
+    different compilations, as different static arguments do. Everywhere else it behaves like the
+    NumPy array it is (read-only); `jnp.asarray` turns it into an ordinary JAX array.
+    """
+
+    def __new__(cls, values, dtype=int):
+        array = np.array(values, dtype=dtype).view(cls)
+        array.setflags(write=False)
+        return array
+
+
+class _StaticKey:
+    """Hashable stand-in for a StaticArray in a pytree definition; equal contents compare equal."""
+
+    __slots__ = ("array", "signature")
+
+    def __init__(self, array):
+        self.array, self.signature = array, hash((array.shape, array.dtype.str))
+
+    def __hash__(self):
+        return self.signature
+
+    def __eq__(self, other):
+        if not isinstance(other, _StaticKey):
+            return NotImplemented
+        a, b = self.array, other.array
+        return a is b or (a.shape == b.shape and a.dtype == b.dtype and bool(np.array_equal(np.asarray(a), np.asarray(b))))
+
+    def __repr__(self):
+        return f"StaticArray{self.array.shape}"
+
+
+def _static_key(array):
+    key = array.__dict__.get("_key")
+    if key is None:
+        key = array.__dict__["_key"] = _StaticKey(array)
+    return key
+
+
+jax.tree_util.register_pytree_node(StaticArray, lambda array: ((), _static_key(array)), lambda key, _: key.array)
+
+
+class _Constant:
+    """Static Python data inside a pytree (a node without leaves), for the residuals of `_fast`."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+
+jax.tree_util.register_pytree_node(_Constant, lambda constant: ((), constant.value), lambda value, _: _Constant(value))
+
+
 class SparseMatrix:
     """
     A constant system matrix in coordinate form: `indices` (2, k) holds rows and columns of the
     nonzero entries, `values` (k,) their values, `shape` is the shape of the dense matrix.
 
     The build step hands the carrier, signal and noise matrix to `simulate` like this, because
-    they are almost empty. The class is a JAX pytree with the leaves `indices` and `values`; the
-    shape is static. `dense()` gives the dense JAX array, `np.asarray(matrix)` the dense NumPy array.
+    they are almost empty. The class is a JAX pytree with the children `indices` (a StaticArray
+    from the build step) and `values`; the shape is static. `dense()` gives the dense JAX array,
+    `np.asarray(matrix)` the dense NumPy array.
     """
 
     __slots__ = ("indices", "values", "shape")
@@ -81,10 +145,11 @@ class SparseMatrix:
         """The coordinate form of a concrete dense matrix (entries in row-major order)."""
         matrix = np.asarray(matrix)
         rows, columns = np.nonzero(matrix)
-        return cls(jnp.asarray(np.stack([rows, columns])), jnp.asarray(matrix[rows, columns]), matrix.shape)
+        return cls(StaticArray([rows, columns]), jnp.asarray(matrix[rows, columns]), matrix.shape)
 
     def dense(self):
-        return jnp.zeros(self.shape, self.values.dtype).at[self.indices[0], self.indices[1]].set(self.values)
+        rows, columns = np.asarray(self.indices) if isinstance(self.indices, StaticArray) else self.indices
+        return jnp.zeros(self.shape, self.values.dtype).at[rows, columns].set(self.values)
 
     def __array__(self, dtype=None, copy=None):
         indices, values = np.asarray(self.indices), np.asarray(self.values)
@@ -1007,9 +1072,10 @@ ARRAY_KEYS = (
 )
 MATRIX_KEYS = ("carrier_matrix", "signal_matrix", "noise_matrix")
 # Names of the arrays a host callback works with: the plain arrays, then both leaves of every
-# matrix. All of them are small. The forward callback gets them as operands and packs them into
-# two residuals for the reverse callback (`_pack`), because every array that crosses a callback
-# or program boundary costs time, however small it is.
+# matrix. Index arrays that the build step marked as static (`StaticArray`) stay with the
+# callbacks. The others go through JAX: the forward callback gets them as operands and packs them
+# into at most two residuals for the reverse callback (`_pack`), because every array that crosses
+# a callback or program boundary costs time, however small it is.
 HOST_KEYS = ARRAY_KEYS + (
     "carrier_base_indices",
     "carrier_base_values",
@@ -1026,59 +1092,75 @@ def _host_leaves(host):
     return [host[key] for key in ARRAY_KEYS] + matrices
 
 
-def _packed_sizes(leaves):
-    """Lengths of the two arrays `_pack` returns, from the static shapes and dtypes of the host arrays."""
-    integers, reals = 1, 0
-    for leaf in leaves:
-        shape, kind = leaf.shape, np.dtype(leaf.dtype).kind
-        integers += 2 + len(shape)
-        if kind in "iub":
-            integers += math.prod(shape)
+def _split_host(host):
+    """
+    The host arrays in two groups: `static` {name: StaticArray} and the ones that travel through
+    JAX, as their `layout` ((name, dtype character, shape) per array) and the arrays themselves.
+    """
+    static, layout, traced = {}, [], []
+    for key, leaf in zip(HOST_KEYS, _host_leaves(host)):
+        if isinstance(leaf, StaticArray):
+            static[key] = leaf
         else:
-            reals += math.prod(shape) * (2 if kind == "c" else 1)
+            layout.append((key, np.dtype(leaf.dtype).char, tuple(leaf.shape)))
+            traced.append(leaf)
+    return static, tuple(layout), traced
+
+
+def _is_integer(character):
+    return np.dtype(character).kind in "iub"
+
+
+def _packed_sizes(layout):
+    """Lengths of the integer and of the real array that `_pack` makes for this layout."""
+    integers = sum(math.prod(shape) for _, character, shape in layout if _is_integer(character))
+    reals = sum(
+        math.prod(shape) * (2 if np.dtype(character).kind == "c" else 1)
+        for _, character, shape in layout
+        if not _is_integer(character)
+    )
     return integers, reals
 
 
-def _pack(A):
+def _pack(A, layout):
     """
-    The arrays `A[key]` for HOST_KEYS as two flat arrays; `_unpack` restores them exactly.
+    The arrays `A[name]` of `layout` as flat arrays; `_unpack` restores them exactly.
 
-    Integer and boolean arrays go into an int64 array, behind a header: its length, then dtype,
-    number of dimensions and shape of every array. Real and complex arrays go into a float64
-    array, where a complex number takes two places.
+    Integer and boolean arrays go into one int64 array, real and complex arrays into one float64
+    array, where a complex number takes two places. An array that would be empty is left out.
     """
-    header, integers, reals = [], [], []
-    for key in HOST_KEYS:
+    integers, reals = [], []
+    for key, character, _ in layout:
         array = np.asarray(A[key])
-        header += [ord(array.dtype.char), array.ndim, *array.shape]
-        kind = array.dtype.kind
-        if kind in "iub":
+        if _is_integer(character):
             integers.append(array.reshape(-1))
-        elif kind == "c":
+        elif array.dtype.kind == "c":
             reals.append(np.ascontiguousarray(array, np.complex128).reshape(-1).view(np.float64))
         else:
             reals.append(array.reshape(-1))
-    packed_integers = np.concatenate([np.asarray([len(header) + 1, *header], np.int64), *integers], dtype=np.int64)
-    packed_reals = np.concatenate(reals, dtype=np.float64) if reals else np.empty(0)
-    return packed_integers, packed_reals
+    packed = []
+    if sum(part.size for part in integers):
+        packed.append(np.concatenate(integers, dtype=np.int64))
+    if sum(part.size for part in reals):
+        packed.append(np.concatenate(reals, dtype=np.float64))
+    return packed
 
 
-def _unpack(packed_integers, packed_reals):
+def _unpack(layout, packed):
     """The dictionary of arrays that `_pack` packed, as views wherever the dtype allows it."""
-    A = {}
-    integer_at, real_at, at = int(packed_integers[0]), 0, 1
-    header = packed_integers[:integer_at].tolist()
-    for key in HOST_KEYS:
-        dtype, ndim = np.dtype(chr(header[at])), header[at + 1]
-        shape = tuple(header[at + 2 : at + 2 + ndim])
-        at += 2 + ndim
-        size = math.prod(shape)
-        if dtype.kind in "iub":
-            flat = packed_integers[integer_at : integer_at + size]
+    sizes = _packed_sizes(layout)
+    packed = [np.asarray(array) for array in packed]
+    packed_integers = packed.pop(0) if sizes[0] else None
+    packed_reals = packed.pop(0) if sizes[1] else None
+    A, integer_at, real_at = {}, 0, 0
+    for key, character, shape in layout:
+        dtype, size = np.dtype(character), math.prod(shape)
+        if _is_integer(character):
+            flat = packed_integers[integer_at : integer_at + size] if size else np.empty(0, np.int64)
             integer_at += size
         else:
             width = 2 if dtype.kind == "c" else 1
-            flat = packed_reals[real_at : real_at + size * width]
+            flat = packed_reals[real_at : real_at + size * width] if size else np.empty(0, np.float64)
             real_at += size * width
             if width == 2:
                 flat = flat.view(np.complex128)
@@ -1110,17 +1192,18 @@ def _output_shapes(arrays):
     return n, m, F, noise_shape
 
 
-def _host_forward(n, optimized_parameters, *host_arrays):
-    A = dict(zip(HOST_KEYS, host_arrays))
+def _host_forward(n, static, layout, optimized_parameters, *traced):
+    A = dict(static)
+    A.update((key, array) for (key, _, _), array in zip(layout, traced))
     entries = EntryPlan(A).values(optimized_parameters)  # derivatives are only taped in the backward pass
     carrier, signal, noise, Y, MU, Z = forward(SystemPlan(A, n), *entries)
-    return carrier[:, None], signal, noise.reshape(-1), Y, MU, Z, *_pack(A)
+    return carrier[:, None], signal, noise.reshape(-1), Y, MU, Z, *_pack(A, layout)
 
 
-def _host_backward(
-    optimized_parameters, carrier, signal, noise, Y, MU, Z, packed_integers, packed_reals, carrier_bar, signal_bar, noise_bar
-):
-    A = _unpack(np.asarray(packed_integers), np.asarray(packed_reals))
+def _host_backward(static, layout, optimized_parameters, carrier, signal, noise, Y, MU, Z, *rest):
+    carrier_bar, signal_bar, noise_bar = rest[-3:]
+    A = dict(static)
+    A.update(_unpack(layout, rest[:-3]))
     F, n = Y.shape[0], carrier.shape[0]
     entry_plan = EntryPlan(A)
     (carrier_entries, signal_entries, _), tape = entry_plan.entries(optimized_parameters)
@@ -1152,24 +1235,33 @@ def _host_backward(
 
 
 def _forward_callback(optimized_parameters, host):
-    """The simulation outputs and the residuals of the reverse pass (Y, MU, Z and the packed host arrays)."""
+    """
+    The simulation outputs, the residuals of the reverse pass (Y, MU, Z and the packed host arrays
+    that are not static) and what the reverse callback needs besides: static arrays and layout.
+    """
     n, m, F, noise_shape = _output_shapes(host)
-    leaves = _host_leaves(host)
-    packed_integers, packed_reals = _packed_sizes(leaves)
-    result_shapes = (
+    static, layout, traced = _split_host(host)
+    packed_integers, packed_reals = _packed_sizes(layout)
+    result_shapes = [
         jax.ShapeDtypeStruct((n, 1), jnp.complex128),
         jax.ShapeDtypeStruct((m, F), jnp.complex128),
         jax.ShapeDtypeStruct((F,), jnp.float64),
         jax.ShapeDtypeStruct((F, m), jnp.complex128),
         jax.ShapeDtypeStruct((F, m), jnp.complex128),
         jax.ShapeDtypeStruct((F, m, DETECTOR_WIDTH), jnp.complex128),
-        jax.ShapeDtypeStruct((packed_integers,), jnp.int64),
-        jax.ShapeDtypeStruct((packed_reals,), jnp.float64),
-    )
+    ]
+    if packed_integers:
+        result_shapes.append(jax.ShapeDtypeStruct((packed_integers,), jnp.int64))
+    if packed_reals:
+        result_shapes.append(jax.ShapeDtypeStruct((packed_reals,), jnp.float64))
     carrier, signal, noise, *residuals = jax.pure_callback(
-        functools.partial(_host_forward, n), result_shapes, optimized_parameters, *leaves, vmap_method="sequential"
+        functools.partial(_host_forward, n, static, layout),
+        tuple(result_shapes),
+        optimized_parameters,
+        *traced,
+        vmap_method="sequential",
     )
-    return (carrier, signal, noise.reshape(noise_shape)), tuple(residuals)
+    return (carrier, signal, noise.reshape(noise_shape)), tuple(residuals), (static, layout)
 
 
 def _is_primal(x):
@@ -1184,8 +1276,7 @@ def _zeros_if_symbolic(value):
 
 @jax.custom_vjp
 def _fast(optimized_parameters, host, others):
-    outputs, _ = _forward_callback(optimized_parameters, host)
-    return outputs
+    return _forward_callback(optimized_parameters, host)[0]
 
 
 def _fast_fwd(optimized_parameters, host, others):
@@ -1200,17 +1291,25 @@ def _fast_fwd(optimized_parameters, host, others):
         full = lambda p, host, others: simulate_jax(optimized_parameters=p, **host, **others)
         outputs, pullback = jax.vjp(full, p, host, others)
         return outputs, (pullback,)
-    outputs, residuals = _forward_callback(p, host)
-    return outputs, (p, outputs, *residuals)
+    outputs, residuals, (static, layout) = _forward_callback(p, host)
+    constant = _Constant((layout, tuple((key, _static_key(array)) for key, array in static.items())))
+    return outputs, (p, outputs, constant, *residuals)
 
 
 def _fast_bwd(residuals, cotangents):
     cotangents = tuple(_zeros_if_symbolic(c) for c in cotangents)
     if len(residuals) == 1:
         return residuals[0](cotangents)
-    p, outputs, *helpers = residuals
+    p, outputs, constant, *helpers = residuals
+    layout, static = constant.value
     gradient = jax.pure_callback(
-        _host_backward, jax.ShapeDtypeStruct(p.shape, p.dtype), p, *outputs, *helpers, *cotangents, vmap_method="sequential"
+        functools.partial(_host_backward, {key: static_key.array for key, static_key in static}, layout),
+        jax.ShapeDtypeStruct(p.shape, p.dtype),
+        p,
+        *outputs,
+        *helpers,
+        *cotangents,
+        vmap_method="sequential",
     )
     return gradient, None, None
 
