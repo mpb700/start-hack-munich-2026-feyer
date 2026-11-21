@@ -7,7 +7,7 @@ Zu stellen am Sa 21.11. bei der Challenge-Präsentation (11–12 Uhr) oder direk
 
 - Der Rechenkern läuft nicht mehr in JAX/XLA, sondern in NumPy/SciPy: Sparse-LU mit SuperLU, eingebunden über `jax.pure_callback`. Den Gradienten liefert eine handgeschriebene Rückwärtsregel (`jax.custom_vjp`).
 - Das gilt nur für Setups vom Typ des Benchmarks. Alle anderen laufen weiter über den Original-JAX-Code.
-- Gemessen auf einem Apple M4: Original 12,8 s → 0,43 s auf macOS und 0,50 s in Docker (Linux, `--cpus 1`, aarch64). Überall `PASS`. Eine Messung dieses Branches auf x86 fehlt noch.
+- Gemessen auf einem Apple M4: Original 12,8 s → 0,43 s auf macOS und 0,50 s in Docker (Linux, `--cpus 1`, aarch64). Überall `PASS`, auch auf x86-64 (dort bisher nur emuliert geprüft). Eine Zeitmessung auf echter x86-Hardware fehlt noch.
 
 ## Die sechs wichtigsten Fragen
 
@@ -88,5 +88,5 @@ Wenn nur wenig Zeit ist, diese zuerst. Von den ersten fünf hängt ab, ob unsere
 
 ## Noch selbst zu erledigen (keine Frage an Feyer)
 
-- Messung von `noel` auf x86-Linux mit `--cpus 1`, mehrfach in frischen Prozessen. Joel hat eine passende Maschine (AMD EPYC). Sein eigener Stand braucht dort laut seinem README 0,76 s, auf Noels Rechner ist `noel` rund 9 % schneller als Joels Stand.
+- Zeitmessung von `noel` auf echter x86-Hardware mit `--cpus 1`, mehrfach in frischen Prozessen. Die Korrektheit auf x86-64 ist am 21.11. emuliert geprüft (`PASS`, alle Prüfskripte). Joel hat eine passende Maschine (AMD EPYC). Sein eigener Stand braucht dort laut seinem README 0,76 s, auf Noels Rechner ist `noel` rund 9 % schneller als Joels Stand.
 - Erledigt am 21.11.: `runs/check_fast.py --fallback` und `runs/check_setups.py` laufen auf diesem Branch durch, auch mit Max' `lu-once` im JAX-Rückfall. Die Werte stehen in `runs/noel/NOTIZEN.md`.

@@ -11,7 +11,7 @@ Vier Stände im Wechsel gemessen (je frischer Prozess), Erstlauf gesamt in ms, M
 | Apple M4, macOS, Threads auf 1 begrenzt, 12 Läufe | 606,5 / 602,7 | 460,3 / 457,9 | 454,4 / 450,1 | **445,8 / 441,3** |
 | Docker auf demselben M4, Linux aarch64, `--cpus 1`, 10 Läufe | 716,5 / 707,2 | 542,8 / 537,4 | 532,3 / 528,2 | **519,7 / 517,3** |
 
-Das Original-Kit braucht auf diesem Mac 12'827 ms (gemessen in Runde 1). Eine Messung von `noel` auf x86-Linux fehlt weiterhin. Joel hat eine solche Maschine (siehe «Stand der anderen Branches»).
+Das Original-Kit braucht auf diesem Mac 12'827 ms (gemessen in Runde 1). Eine Zeitmessung von `noel` auf echter x86-Hardware fehlt weiterhin. Joel hat eine solche Maschine (siehe «Stand der anderen Branches»). Die Korrektheit auf x86-64 ist seit dem 21.11. emuliert geprüft (siehe «x86-64, emuliert»).
 
 Phasen (Median, ms):
 
@@ -63,6 +63,26 @@ Runde 7 gegen Runde 6 (`d0e0fa8` → `e311d5c`), je 16 Läufe im Wechsel, Median
 Die Änderung betrifft nur den Build. Forward, Gradient und Warm sind innerhalb der Streuung gleich. Auf dem Mac verschwindet der Gewinn von gut 2 ms in der Streuung der Import-Phase (±3 ms).
 
 Die Reports `mac-neu.json`, `mac-neu.png` und `docker-neu.json` zeigen den Stand `e311d5c`, erzeugt am 21.11. um 10:54 auf Akku bei ruhigem Rechner: Mac 431,6 ms im Erstlauf und 29,2 ms warm (der mittlere von fünf Läufen, 427,1 bis 434,3 ms), Docker 499,1 ms und 35,7 ms (der mittlere von fünf, 496,9 bis 510,1 ms). Alle `PASS`. Der Mac-Report lief ohne Bytecode-Cache für `differometor` (siehe Runde 7). Mit Cache wären es rund 10 ms weniger. Die `*-vorher`-Reports zeigen Philip + Max.
+
+## x86-64, emuliert (21.11., 13:04, Stand `cb902d7`, auf Noels Wunsch)
+
+`noel` war bis dahin nur auf Apple Silicon und in Docker auf aarch64 gelaufen. Als x86-64-Image unter Rosetta (`VirtualApple`, Linux x86_64, glibc 2.41, Python 3.12.16, dieselben gepinnten Pakete):
+
+| Prüfung | Ergebnis auf x86-64 |
+| --- | --- |
+| `benchmark.py --cpus 1 --repeats 3` | `PASS`, Fehler gegen Feyers Referenz 5,3743e-06 (wie auf aarch64), alle Ausgaben und Gradienten endlich, Gradient-Norm 70'517,1007 |
+| Ausgaben gegen den nativen Mac-Lauf (relativ zum Maximum) | Carrier 2,9e-13, Signal 8,0e-10, Noise 3,8e-10, Sensitivity 2,4e-12, Powers 5,8e-13, Gradient 1,2e-11. Grösste Abweichung von `ln s`: 1,2e-11 |
+| `check_fast.py runs/noel/orig.npz --fallback` | Carrier 9,5e-12, Signal 1,168e-07, Noise 3,817e-08, Sensitivity 5,735e-09, Powers 1,336e-11, Gradient 7,986e-08 |
+| `check_setups.py` | aLIGO (schnell) höchstens 7,9e-09, aLIGO verknüpft und Voyager 0 |
+| `test_detectors.py`, `test_adjoint.py`, `test_perturbed.py` | WORST 2,2e-15, 1,8e-07 (Blockgrössen: Abweichung 0), 3,9e-08 |
+| `test_pack.py`, `test_sparse.py`, `test_build.py` | alle «OK» |
+
+Die Zeiten aus der Emulation sagen nichts aus (Erstlauf 2,2 s, davon 0,77 s Sensitivity-Kompilation). Rosetta bietet auch nicht denselben Befehlssatz wie ein Xeon (kein AVX-512). Auf echter Hardware können darum andere Rechenkerne von OpenBLAS und XLA laufen. Zu erwarten sind Unterschiede auf Rundungsniveau, bei einer Toleranz von 1e-5 und einem Abstand von 4,6e-6.
+
+```bash
+docker build --platform linux/amd64 -t differometor-bench:x86 .
+docker run --rm --platform linux/amd64 differometor-bench:x86 --repeats 3
+```
 
 ## Was in Runde 7 geändert wurde
 
@@ -268,7 +288,7 @@ docker run --rm --cpuset-cpus 0 --entrypoint python differometor-bench:neu /app/
 
 Einzelne Läufe streuen um bis zu 40 ms. Darum immer abwechselnd messen und Median und Minimum ansehen. Für kleine Änderungen die Phasen einzeln vergleichen: Die Berichte der Wechselvergleiche liegen in `runs/noel/out/` (`ab-<Name>-<Nr>.json`) und `runs/noel/out/docker/`. Der erste Lauf eines frisch gebauten Images ist ein Ausreisser (562 statt 520 ms) und zählt nicht.
 
-Vorhandene Docker-Images: `differometor-bench:base` (Philip + Max), `:vorher` (`c261b63`), `:kandidat3` (`49d386b`), `:runde3` (`1442ef3`), `:runde4` (`ba8f1f2`), `:runde5` (`45a2328`), `:runde6` (`7d12ba7`), `:runde7` (`e311d5c`), `:joel` (`76e799f`).
+Vorhandene Docker-Images: `differometor-bench:base` (Philip + Max), `:vorher` (`c261b63`), `:kandidat3` (`49d386b`), `:runde3` (`1442ef3`), `:runde4` (`ba8f1f2`), `:runde5` (`45a2328`), `:runde6` (`7d12ba7`), `:runde7` (`e311d5c`), `:x86` (`cb902d7`, linux/amd64, emuliert), `:joel` (`76e799f`).
 
 ## Korrektheit prüfen (nach jeder Änderung)
 
@@ -350,11 +370,11 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 
 | Branch | Zuletzt gesehen | Stand in `noel` |
 | --- | --- | --- |
-| `origin/philip` | `ab82e42` (20.11. 19:58), unverändert am 21.11. 10:35 | vollständig enthalten |
+| `origin/philip` | `ab82e42` (20.11. 19:58), unverändert am 21.11. 12:46 | vollständig enthalten |
 | `origin/max/lu-once` | `79ae580` (20.11. 20:08), unverändert | vollständig enthalten |
 | `origin/max/nacht` | `f1000e9` (21.11. 03:25), neu in Runde 3 | zusammengeführt in `7279114`. Übernommen: nachgeladene Module, `_EntryBlock.back`, In-place-Produkte, `signal_values` ohne Zwischenkopie. Ersetzt durch den Stand von `noel`: Spaltenordnung `MMD_ATA` (7'916 Faktoreinträge gegen 6'100) |
-| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 10:35, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
-| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 10:35 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
+| `origin/Joel` | `76e799f` (21.11. 05:19), unverändert am 21.11. 12:46, baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
+| `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 12:46 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `5eece1d` | unverändertes Kit |
 
 Joels Stand gegen `noel` auf Noels Rechner (je 10 Läufe im Wechsel, Median):
