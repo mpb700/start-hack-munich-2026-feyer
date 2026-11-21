@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: Sa 21.11.2026, 21:29, nach Runde 16. **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
+Stand: Sa 21.11.2026, 21:55, nach Runde 17. **Die Schleife arbeitet seit 21:02 für Philips Stand (`philip-fastest`), nicht mehr an `noel`.** Diese Datei ist das Gedächtnis für die nächste Optimierungsrunde.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -129,7 +129,19 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
 
-**Weitere Hebel für Philips Linie:** Frequenzblöcke im Vorwärtslauf (3 bis 8 ms auf dem Xeon, braucht eine Trennung von Analyse und Numerik in `pattern_lu.c`), `signal` und `MU` ohne Umkopieren aus `solutions` (rund 0,5 ms), ein Umbau des Builds pro Bauteil-Art (geschätzt weitere 20 bis 30 % des Builds, gross), Imports (Philips Gebiet). Die Rausch-Summen aus der Tabelle von Runde 14 sind mit dem Vorwärts-Patch erledigt.
+**Runde 17 (21.11., 21:43 bis 21:55): kein neuer Patch.** `philip-fastest` und `main` stehen unverändert auf `8e7c4f1`, die beiden Patches sind dort noch nicht angewendet. Gearbeitet auf `8e7c4f1` plus beiden Patches.
+
+| Versuch | Ergebnis |
+| --- | --- |
+| Signalwerte (`SystemPlan.signal_values`) mit weniger Zwischenfeldern: konstante Werte nur in die Zeilen ohne Eintrag, Vorzeichen der Platzierung auf dem kurzen Carrier-Vektor statt auf dem grossen Feld (zwei Felder von 1,6 MB weniger) | Die Funktion selbst 0,486 → 0,368 ms (M4, warm), Ergebnis bitgleich. Im Benchmark nicht messbar: Forward-Phase in Docker `--cpus 1`, 16 Läufe im Wechsel, 25,9 / 24,6 → 26,0 / 24,8 ms (Median / Minimum). Verworfen |
+
+Gemessen, ohne etwas zu ändern (M4, auf beiden Patches):
+
+- Strukturpläne pro Vorwärtslauf: `EntryPlan` 0,40 ms, `SystemPlan` 0,60 ms, Rückwärts-Layout 0,03 ms. In `_EntryBlock.__init__` stecken pro Vorwärtslauf rund 50 `np.unique`- und 70 `np.nonzero`-Aufrufe auf kleinen Arrays. Mehr als 0,2 ms sind dort nicht zu holen.
+- Signalwerte: 0,49 ms warm (Platzierung 0,22, Konjugation 0,10, Einträge 0,08, Basiswerte 0,07). Philips 5,8 ms auf dem Xeon im ersten Aufruf sind also vor allem frisch angefasster Speicher.
+- `pattern_lu.c` kennt schon einen Parameter `chunk` für die Numerik und die Lösungen. Laut Kommentar im Code brachte er in keiner Messung etwas, weil die Werte Eintrag für Eintrag über alle Frequenzen liegen. Frequenzblöcke nach dem Muster von `noel` bräuchten also eine andere Ablage der Faktoren (pro Block wiederverwendet) und eine Analyse, die über die Blöcke hinweg gilt. Das ist ein Umbau im C-Code und nur auf x86 messbar.
+
+**Weitere Hebel für Philips Linie:** der genannte Umbau im C-Code (3 bis 8 ms laut Philips Schätzung), `signal` und `MU` ohne Umkopieren aus `solutions` (rund 0,5 ms, bräuchte zwei getrennte Lösungen, deren Kosten im C-Code hier nicht messbar sind), ein Umbau des Builds pro Bauteil-Art (geschätzt weitere 20 bis 30 % des Builds, gross), Imports (Philips Gebiet). Host-seitig sehe ich darüber hinaus nichts mehr über 0,3 ms auf dem Mac.
 
 ## Runde 14 (21.11., 20:55 bis 21:00): Schleife alle 30 Minuten, Blick in Philips Stand
 
@@ -679,7 +691,7 @@ Vor jeder Runde: `git fetch --all --prune`, dann alle fremden Branches auf neue 
 | `origin/Joel` | `9f79a5f` (21.11. 17:53), neu seit `76e799f`: nur das README (Verweis auf das neue Tag `joels-fastest` = `ac7aedc`). Baut auf Philips `ab82e42` auf | nichts zu übernehmen. Joels drei Code-Änderungen (Host-Detektoren, Plotly bei Bedarf, SuperLU ohne SciPy-Import) hat `noel` seit Runde 1 in eigener Fassung |
 | `origin/sx`, `origin/sx2`, `origin/sx2-env` | `2c9e8bf`, `036194a`, `bf6bf60` (21.11. 03:33 bis 04:00), unverändert am 21.11. 18:36 | nicht übernommen. Das sind Joels vorbereitete Varianten mit XLA-Flags bzw. `jax_disable_most_optimizations`, laut seinem README erst nach Zusage von Feyer zu aktivieren. Gleiche Regelfrage wie unser B6 |
 | `origin/main` | `8e7c4f1` (seit 21.11. 21:18 gleich `philip-fastest`, also mit Balanced Homodyne). Vorher `50341f9` (17:30), davor das unveränderte Kit `5eece1d` | nicht übernommen (Regelfragen B4 bis B6, Abmachung «keine Caches»). Das unveränderte Kit ist weiter `5eece1d` |
-| `origin/philip-fastest` | `8e7c4f1` (21.11. 20:37, seit `11e96b4` nur ein Testskript), unverändert am 21.11. 21:28. `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
+| `origin/philip-fastest` | `8e7c4f1` (21.11. 20:37, seit `11e96b4` nur ein Testskript), unverändert am 21.11. 21:43. `main` plus weitere Start-Massnahmen (315,3 ms auf dem Xeon), seit `708803d` mit Balanced Homodyne im schnellen Weg, seit `11e96b4` mit den Dokumenten des offiziellen Repos | nicht übernommen. Der Patch aus Runde 12 ist hier überholt |
 
 ### Philips Messungen auf dem Xeon Platinum 8468 (aus `origin/philip:_nacht/vm/jobs/`, nicht von uns gemessen)
 
