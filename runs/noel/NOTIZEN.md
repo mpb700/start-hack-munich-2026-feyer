@@ -94,7 +94,12 @@ Zu Nr. 24:
 - **Jeder andere Kotangent** (anderes Readout, Homodyne-Phase ungleich 180°, Verlust auf beliebigen Signalzeilen) nimmt `general_adjoint`: eine zweite Zerlegung im Rückwärtslauf, wie bisher für Kotangenten ausserhalb der Detektorzeilen. Das kostet dort rund 10 ms mehr als mit der Basis, das Ergebnis ist dasselbe. `test_adjoint.py` prüft diesen Weg.
 - **Zahlen:** Carrier, Signal und Powers des Benchmarks sind bitgleich. Noise ändert sich um 9,4e-16, Sensitivity um 4,1e-16, Gradient um 3,5e-12 (relativ zum Maximum), `ln s` um höchstens 7e-15. Alle Prüfskripte mit denselben Werten wie vorher (Voyager Sensitivity 7,30e-13 statt 7,27e-13).
 - `runs/noel/profil.py` nimmt für den Rückwärtslauf jetzt einen Kotangenten wie das Benchmark-Readout. Vorher war er zufällig, das wäre seit dieser Runde der langsame Weg.
-- Zurücknehmen: den Commit dieser Runde mit `git revert`.
+- Zurücknehmen: `git revert 9a55e69`.
+
+In Runde 10 ausserdem gemessen (nichts geändert):
+
+- **Build-Phase:** Von den 23 bis 25 ms auf dem Mac gehören 5,0 ms uns (`run_build_step`). 18,5 ms sind drei XLA-Kompilationen von `convert_element_type`, die `benchmark.py` mit `jnp.asarray(..., dtype=jnp.float64)` auslöst: 11 bis 12 ms für die 193 Parameter (die erste Kompilation des Prozesses), 3,4 bis 3,9 ms für die Frequenzen und 3,5 bis 3,9 ms für die Konstante 1.0. `Setup.from_data`, die Gruppierung der Längen und `jnp.asarray(ports)` brauchen zusammen unter 0,2 ms. Diese Kompilationen liegen ausserhalb von `differometor/`. Philip umgeht sie mit einem Eingriff in JAX (`_tuning.FAST_ASARRAY`), daher seine 17 statt 53 ms Build auf dem Xeon.
+- **Rückwärts-Callback** (Mac, warm, 7,4 ms): Rückwärtsformeln 2,8 ms, Einträge mit Ableitungen 2,8 ms, Pullback 1,4 ms, `EntryPlan` und `SystemPlan` je 0,4 ms, Projektion des Kotangenten 0,2 ms.
 
 ## Runde 9: Setup-Varianten (Feyers Zusatz vom 21.11.)
 
@@ -496,6 +501,7 @@ Sollwerte (Stand Runde 10, auf Noels M4, unverändert seit Runde 2):
 | 4b | Speicherbereinigung von Python vor `import jax` abschalten | gemessen: rund 20 ms (478 bis 491 statt 500 bis 511 ms) | Geht nur ausserhalb von `differometor/` (Startskript, Umgebung oder `benchmark.py`). Das ist Feyers Entscheid, nicht unserer |
 | 4c | Zwischenergebnisse des Forward-Laufs im Prozess behalten statt als Residuen durch JAX zu schicken (LU-Faktoren, Pläne) | geschätzt 3 ms in Docker, nicht gemessen | Widerspricht der Abmachung «keine Caches». Bräuchte Noels Ja und einen zustandslosen Rückfall |
 | 5 | `noel` auf Joels x86-Maschine messen (AMD EPYC, `taskset -c 14 python benchmark.py --cpus 1`), im Wechsel mit `6b67cfd` (Stand vor Runde 5). Die Bündelung aus Runde 5 lässt sich nach Runde 6 nicht mehr einzeln zurücknehmen. Sie ist jetzt Teil des Entwurfs, und ihr Nachteil im Warmlauf ist weg | – | Joel fragen |
+| 9 | Im Rückwärtslauf die beiden Produkte pro Matrixeintrag zusammenfassen, wenn die Abkürzung aus Runde 10 gilt: `-conj(Y[rows]) * (alpha * X + 2 g * MU)[cols]` statt `-lam[rows] * X[cols] - 2 g * conj(Y[rows]) * MU[cols]` (zwei Zugriffe mit Indexlisten statt vier) | geschätzt 0,5 ms auf dem Mac, 0,7 ms in Docker, auf dem Xeon vielleicht 1,5 ms | An der Messgrenze. Zweiter Zweig in der Schleife, Zahlen ändern sich auf Rundungsniveau |
 | 8 | Vorab-Elimination der einfachen Unbekannten nach Philips Muster (`_CondensedLU`: 751 → 200 Unbekannte in drei Stufen). In Runde 8 auf dem Mac verworfen (2,4 ms langsamer). Auf x86 ist SuperLU laut Philip 3,5-mal langsamer als auf dem M4, mit rund 0,5 µs festem Aufwand pro Spalte, und dort hat es bei ihm den Vorwärtslauf von 105,8 auf 82,1 ms gebracht | unbekannt für unseren Stand (balancierte Zerlegung mit 6'100 Faktoreinträgen). Philips Stand ohne eigene C-Zerlegung liegt auf dem Xeon im Forward bei 57 ms, `noel` bei 63 ms | Lässt sich nur auf x86 beurteilen. Auf dem Mac und in Docker (aarch64) sieht man den Effekt nicht |
 | 6 | Falls ohne `__pycache__` gewertet wird (Frage B4): Code, den der Benchmark nie ausführt, in Module auslagern, die erst bei Bedarf geladen werden (Teile von `build.py` und `components.py`) | unbekannt, höchstens einige der 13 ms | Mit `__pycache__` bringt es nichts. Erst nach Feyers Antwort |
 
