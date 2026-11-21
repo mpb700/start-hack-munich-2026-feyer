@@ -1,0 +1,588 @@
+From fd9f8b607e3a67a01079bfed43f376335e19243e Mon Sep 17 00:00:00 2001
+From: Noel Blatter <noel.blatter@gmail.com>
+Date: Sat, 21 Nov 2026 23:39:35 +0100
+Subject: [PATCH] Signal solves in the layout of the native kernel: no
+ transposed copies
+
+The native kernel factorizes and solves on arrays with one row per unknown,
+shape (m, F). The forward pass handed it right-hand sides of shape (F, m, k)
+instead, which plu_solve_fmk copies into a work array and back for every
+right-hand side, and then transposed the solutions once more for signal and
+again in the reverse pass for conj(Y) and MU.
+
+Now the right-hand sides, which are zero outside a few rows, are handed over
+as rows and values (solve_scattered). The native kernel builds them in its own
+layout and returns (m, F) solutions directly; the SuperLU path builds its
+(F, m, k) array as before. The adjoint helpers are kept as conj(Y) and MU with
+one row per unknown, the layout the reverse pass works in, so its two
+transposed copies are gone on both paths. The noise sums run in the same
+layout, and the cotangent of the noise entries is only formed for the entries
+that come from noise functions.
+
+Emulated x86-64 with the native kernel, 6 alternating runs: warm forward
+18.8 -> 17.1 ms, warm gradient 4.8 -> 4.5 ms; page faults of the first calls
+5703 -> 5036 (forward) and 1997 -> 1516 (backward). Benchmark outputs and
+gradient bit-identical there. On arm64 (SuperLU path) carrier, signal, noise,
+sensitivity and powers are bit-identical and the gradient agrees to 4e-16.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ differometor/__pycache__/fast.cpython-312.pyc | Bin 109728 -> 112060 bytes
+ differometor/fast.py                          | 147 +++++++++++-------
+ 2 files changed, 92 insertions(+), 55 deletions(-)
+
+diff --git a/differometor/__pycache__/fast.cpython-312.pyc b/differometor/__pycache__/fast.cpython-312.pyc
+index 85d2a6e125a8714c41e3285692a9331aa77baedf..bc0050eadcc6ebdf20a0e241ba4f20a5a4ec6b27 100644
+GIT binary patch
+delta 9649
+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
+
+delta 7507
+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
+X2+HBQgwlUBqwghfZ7q@g5{CXCkToMB
+
+diff --git a/differometor/fast.py b/differometor/fast.py
+index 87911a3..b4489b0 100644
+--- a/differometor/fast.py
++++ b/differometor/fast.py
+@@ -285,8 +285,8 @@ FUNCTIONS_NUMPY = _rebind_component_functions()
+ 
+ 
+ def _group_sum(values, order, starts):
+-    """Sum the columns of `values` (R, E) that share a target slot (`order`/`starts` from `_grouping`)."""
+-    return np.add.reduceat(values[:, order], starts, axis=1)
++    """Sum the rows of `values` (E, R) that share a target slot (`order`/`starts` from `_grouping`)."""
++    return np.add.reduceat(values[order], starts, axis=0)
+ 
+ 
+ def _grouping(targets):
+@@ -666,10 +666,10 @@ class SystemPlan:
+         return self._layout[2]
+ 
+     def noise_values(self, noise_entries):
+-        """Noise matrix values, shape (F, entries), from the noise entries (E, F)."""
++        """Noise matrix values, shape (entries, F), from the noise entries (E, F)."""
+         F = noise_entries.shape[1]
+-        base = np.broadcast_to(self.noise_base.astype(complex), (F, self.noise_base.size))
+-        return np.concatenate([base, noise_entries[self.noise_live].T], axis=1)
++        base = np.broadcast_to(self.noise_base.astype(complex)[:, None], (self.noise_base.size, F))
++        return np.concatenate([base, noise_entries[self.noise_live]])
+ 
+     def detector_weights(self, carrier):
+         n, s = self.n, self.selection
+@@ -872,6 +872,7 @@ class _CondensedLU:
+ 
+     def __init__(self, size, rows, cols, values, select=None, overwrite=False):
+         entries, F = rows.size, values.shape[1]
++        self.size, self.F = size, F
+         # With `overwrite` the caller gives the values up. If they are the head of a larger array
+         # with enough room behind them (`SystemPlan.signal_values(..., spare=...)`) and the entries
+         # are its first rows, the stages work in that array. Otherwise the values are copied.
+@@ -947,6 +948,25 @@ class _CondensedLU:
+             (stage.lower if transposed else stage.upper).subtract(x, transposed)
+         return x
+ 
++    def solve_rows(self, b, trans="N"):
++        """The same for one right-hand side of shape (size, F), one row per unknown; returns a new array."""
++        x = self.solve(np.ascontiguousarray(b.T, dtype=complex)[:, :, None], trans, overwrite=True)
++        return np.ascontiguousarray(x[:, :, 0].T)
++
++    def solve_scattered(self, sides, trans="N"):
++        """
++        Solutions of shape (size, F), one row per unknown, for right-hand sides that are zero
++        outside a few rows. `sides` has one list per right-hand side, with pairs of row numbers
++        (no repeats within a pair) and values of shape (rows, F) or (rows, 1); the pairs of a
++        right-hand side add up. All right-hand sides are solved in one pass.
++        """
++        x = np.zeros((self.F, self.size, len(sides)), complex)
++        for j, parts in enumerate(sides):
++            for rows, values in parts:
++                x[:, rows, j] += values.T
++        x = self.solve(x, trans, overwrite=True)
++        return [np.ascontiguousarray(x[:, :, j].T) for j in range(len(sides))]
++
+ 
+ # ---------------------------------------------------------------------
+ # Native factorization with one pivot sequence for all frequencies (optional)
+@@ -1015,6 +1035,7 @@ class _PatternLU:
+     def __init__(self, library, handle, store, size, frequencies):
+         self._library, self._handle, self._store = library, handle, store
+         self.size, self.F = size, frequencies
++        self._work = None  # right-hand side of `solve_scattered`, reused from call to call
+ 
+     @classmethod
+     def create(cls, size, rows, cols, values, select=None, overwrite=False, samples=None):
+@@ -1101,19 +1122,42 @@ class _PatternLU:
+         self._library.plu_solve(self._handle, b.ctypes.data, x.ctypes.data, int(trans == "T"))
+         return x
+ 
++    def solve_scattered(self, sides, trans="N"):
++        """
++        Like `_CondensedLU.solve_scattered`. The kernel works on arrays with one row per unknown,
++        so nothing is transposed on the way in or out, and one work array serves every
++        right-hand side (the kernel skips its zero rows).
++        """
++        work = self._work
++        if work is None:
++            work = self._work = np.empty((self.size, self.F), complex)
++        solutions = []
++        for parts in sides:
++            work.fill(0.0)
++            for rows, values in parts:
++                work[rows] += values
++            solutions.append(self.solve_rows(work, trans))
++        return solutions
++
+ 
+ def forward(plan, carrier_entries, signal_entries, noise_entries):
+-    """Carrier (n,), signal (m, F) and noise (F,) outputs plus the adjoint helpers Y = S^-H w and MU.
++    """Carrier (n,), signal (m, F) and noise (F,) outputs plus the adjoint helpers `Yc` and `MU`.
++
++    Per frequency this takes one factorization and three solves: S^T conj(Y) = conj(w), then
++    S X = rhs and S MU = (N + N^H) Y / 2. Simple unknowns are eliminated exactly beforehand and the
++    rest goes through SuperLU as one block-diagonal system for all frequencies (`_CondensedLU`),
++    or everything goes through the native kernel (`_PatternLU`). Everything between the solves is
++    evaluated for all frequencies at once.
+ 
+-    Per frequency this takes one factorization and two solves: S^T conj(Y) = conj(w), then
+-    S [X, MU] = [rhs, (N + N^H) Y / 2]. Simple unknowns are eliminated exactly beforehand and the
+-    rest goes through SuperLU as one block-diagonal system for all frequencies (`_CondensedLU`).
+-    Everything between the two solves is evaluated for all frequencies at once.
++    The helpers have the layout of `signal`, one row per unknown and one column per frequency:
++    `Yc` is conj(Y) with Y = S^-H w, which is what the transposed solve returns and what the
++    reverse pass multiplies with, and `MU` is the second solution. All right-hand sides are zero
++    outside a few rows and are handed over that way (`solve_scattered`), so that each solver
++    builds them in the layout it works in.
+ 
+     The last return value (carrier factorization, placing pre-values, signal factorization) is
+     what `backward` would otherwise compute a second time.
+     """
+-    m = plan.m
+     carrier_lu, carrier_rhs = plan.carrier_matrix(carrier_entries)
+     carrier = carrier_lu.solve(carrier_rhs)
+     # The matrix values are built in the array the factorization works in. The factorization
+@@ -1122,34 +1166,31 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
+     V, pre = plan.signal_values(signal_entries, carrier, spare=spare)
+     w = plan.detector_weights(carrier)
+     N = plan.noise_values(noise_entries)
+-    F = V.shape[1]
+-    right_hand_sides = np.zeros((F, m, 2), complex)
+-    right_hand_sides[:, plan.rhs_rows, 0] = V[~plan.in_matrix].T
++    source = V[~plan.in_matrix]
+     factors = plan.signal_factors(V, overwrite=True, restore=lambda: plan.signal_values(signal_entries, carrier, spare=spare)[0])
+     del V
+-    # S^-H w = conj(S^-T conj(w))
+-    Y = factors.solve(np.broadcast_to(np.conj(w)[:, None], (F, m, 1)), trans="T")[:, :, 0]
+-    np.conjugate(Y, out=Y)
+-    # N y and N^H y have few entries. They go straight into the second right-hand side
+-    # (N + N^H) y / 2, which is still zero, and the noise power y^H N y is summed over the noise
+-    # entries instead of over all unknowns.
+-    from_rows = Y[:, plan.noise_rows]
+-    products = N * Y[:, plan.noise_cols]  # the terms of N y
+-    power = np.einsum("fe,fe->f", np.conj(from_rows), products).real
+-    half = right_hand_sides[:, :, 1]
++    # S^-H w = conj(S^-T conj(w)); the weights are zero outside the detector ports.
++    read = np.nonzero(w)[0]
++    (Yc,) = factors.solve_scattered([[(read, np.conj(w[read])[:, None])]], trans="T")
++    # N y and N^H y have few entries. They are the second right-hand side (N + N^H) y / 2, and
++    # the noise power y^H N y is summed over the noise entries instead of over all unknowns.
++    from_rows = Yc[plan.noise_rows]  # conj(y) at the row of every noise entry, shape (entries, F)
++    products = np.conj(Yc[plan.noise_cols])  # y at its column
++    np.multiply(N, products, out=products)  # the terms of N y
++    power = np.einsum("ef,ef->f", from_rows, products).real
++    half = []
+     order, starts, slots = plan.noise_by_row
+     if order.size:
+-        half[:, slots] = 0.5 * _group_sum(products, order, starts)
++        half.append((slots, 0.5 * _group_sum(products, order, starts)))
+     order, starts, slots = plan.noise_by_col
+     if order.size:
+         np.conjugate(N, out=N)  # N is not used again
++        np.conjugate(from_rows, out=from_rows)  # now y at the row, the einsum above is done
+         N *= from_rows  # the terms of N^H y
+-        half[:, slots] += 0.5 * _group_sum(N, order, starts)
+-    solutions = factors.solve(right_hand_sides, overwrite=True)
+-    signal = np.ascontiguousarray(solutions[:, :, 0].T)
+-    MU = np.ascontiguousarray(solutions[:, :, 1])
++        half.append((slots, 0.5 * _group_sum(N, order, starts)))
++    signal, MU = factors.solve_scattered([[(plan.rhs_rows, source)], half])
+     noise = np.sqrt(2 * power * NOISE_SCALE)
+-    return carrier, signal, noise, Y, MU, (carrier_lu, pre, factors)
++    return carrier, signal, noise, Yc, MU, (carrier_lu, pre, factors)
+ 
+ 
+ class _ReverseLayout:
+@@ -1205,7 +1246,7 @@ class _ReverseLayout:
+         self.sum_carrier = plan.signal_carrier_indices[self.sum_entries]
+ 
+ 
+-def _signal_adjoint(plan, carrier, signal, Y, MU, signal_bar, g, V, factors):
++def _signal_adjoint(plan, carrier, signal, Yc, MU, signal_bar, g, V, factors):
+     """
+     The cotangent of the signal matrices as a sum of products: entry (r, c) of S_f gets
+     sum_k left_k[r, f] * right_k[c, f], with arrays of shape (m, F). Also returns lam = S^-T
+@@ -1215,16 +1256,13 @@ def _signal_adjoint(plan, carrier, signal, Y, MU, signal_bar, g, V, factors):
+     over signal at the same detector) puts a cotangent on the signal that is a multiple alpha_f
+     of conj(w) at every frequency, because signal and noise are read through the same weights w.
+     Then lam_f = alpha_f conj(Y_f) without another solve, and the two products share their left
+-    factor: conj(Y[r]) * -(alpha signal[c] + 2 g MU[c]).
++    factor: conj(Y[r]) * -(alpha signal[c] + 2 g MU[c]). `Yc` is conj(Y) and, like `MU`, already
++    has the shape (m, F) (see `forward`).
+ 
+     Any other cotangent takes one more solve with the factorization of the forward pass
+     (`factors`), or with a new one if that is gone.
+     """
+-    m, F = signal.shape
+-    Y_rows = np.empty((m, F), complex)
+-    np.conjugate(Y.T, out=Y_rows)  # conj(Y), one row per unknown
+-    right = np.ascontiguousarray(MU.T)
+-    right *= -2.0 * g
++    right = MU * (-2.0 * g)
+     weights = np.conj(plan.detector_weights(carrier))
+     read = np.nonzero(weights)[0]
+     support = np.nonzero(np.any(signal_bar != 0, axis=1))[0]
+@@ -1234,12 +1272,11 @@ def _signal_adjoint(plan, carrier, signal, Y, MU, signal_bar, g, V, factors):
+         rest = np.abs(cotangent - weights[:, None] * alpha).max(axis=0)
+         if (rest <= PARALLEL_TOLERANCE * np.abs(cotangent).max(axis=0)).all():
+             right -= signal * alpha
+-            return [(Y_rows, right)], lambda rows: Y_rows[rows] * alpha
++            return [(Yc, right)], lambda rows: Yc[rows] * alpha
+     if factors is None:
+         factors = plan.signal_factors(V)
+-    lam = factors.solve(np.ascontiguousarray(signal_bar.T, dtype=complex)[:, :, None], trans="T", overwrite=True)
+-    lam = np.ascontiguousarray(lam[:, :, 0].T)
+-    return [(lam, -signal), (Y_rows, right)], lambda rows: lam[rows]
++    lam = factors.solve_rows(np.array(signal_bar, dtype=complex, order="C"), trans="T")
++    return [(lam, -signal), (Yc, right)], lambda rows: lam[rows]
+ 
+ 
+ def backward(
+@@ -1249,7 +1286,7 @@ def backward(
+     carrier,
+     signal,
+     noise,
+-    Y,
++    Yc,
+     MU,
+     carrier_bar,
+     signal_bar,
+@@ -1260,8 +1297,8 @@ def backward(
+ ):
+     """Cotangents of the carrier, signal and noise entries (JAX's bilinear convention).
+ 
+-    `signal` and `signal_bar` have shape (m, F), the adjoint helpers Y and MU (F, m). `kept` is the
+-    last return value of `forward` for the same inputs, when it is still available.
++    `signal`, `signal_bar` and the adjoint helpers `Yc` and `MU` of `forward` have shape (m, F).
++    `kept` is the last return value of `forward` for the same inputs, when it is still available.
+ 
+     The cotangent of the signal entries has one row per entry in `wanted` (default: every entry,
+     in order). `varying` marks the signal entries whose value differs between the frequencies
+@@ -1275,11 +1312,11 @@ def backward(
+         factors = None
+     else:
+         (carrier_lu, pre, factors), V = kept, None
+-    F = Y.shape[0]
++    F = signal.shape[1]
+     layout = plan.reverse_layout(wanted, varying)
+     carrier_bar = carrier_bar.astype(complex).copy()
+     g = noise_bar * NOISE_SCALE / noise  # d noise / d power
+-    terms, lam_rows = _signal_adjoint(plan, carrier, signal, Y, MU, signal_bar, g, V, factors)
++    terms, lam_rows = _signal_adjoint(plan, carrier, signal, Yc, MU, signal_bar, g, V, factors)
+ 
+     # Cotangents of the visited matrix entries, built in place: sum_k left_k[rows] * right_k[cols].
+     rows, cols = layout.rows, layout.cols
+@@ -1316,11 +1353,11 @@ def backward(
+     block[layout.dead] = 0.0
+     signal_entries_bar = block[: layout.count]
+ 
+-    N_bar = g[:, None] * np.conj(Y[:, plan.noise_rows]) * Y[:, plan.noise_cols]
++    written = plan.noise_base.size  # the entries after the constant ones come from noise functions
+     noise_entries_bar = np.zeros((plan.noise_live.size, F), complex)
+-    noise_entries_bar[plan.noise_live] = N_bar[:, plan.noise_base.size :].T
++    noise_entries_bar[plan.noise_live] = g * Yc[plan.noise_rows[written:]] * np.conj(Yc[plan.noise_cols[written:]])
+ 
+-    w_bar = 2 * np.conj(g @ MU)  # sum over the frequencies of 2 g conj(MU)
++    w_bar = 2 * np.conj(MU @ g)  # sum over the frequencies of 2 g conj(MU)
+     s = plan.selection
+     carrier_bar += w_bar[:n] * s[:n] + np.conj(w_bar[n : 2 * n]) * s[n : 2 * n]
+     lam_c = carrier_lu.solve(carrier_bar, trans="T")
+@@ -1335,10 +1372,10 @@ def selection_cotangent(carrier, noise, MU, noise_bar):
+     Cotangent of the noise detector's selection vector, shape (m,). The detector weights are
+     w = selection * carrier on the upper sideband, conj(selection * carrier) on the lower one and
+     the selection itself elsewhere (`SystemPlan.detector_weights`); their cotangent is the
+-    `w_bar` of `backward`.
++    `w_bar` of `backward`. `MU` has shape (m, F).
+     """
+     n = carrier.shape[0]
+-    selection_bar = 2 * np.conj((noise_bar * NOISE_SCALE / noise) @ MU)
++    selection_bar = 2 * np.conj(MU @ (noise_bar * NOISE_SCALE / noise))
+     selection_bar[:n] *= carrier
+     selection_bar[n : 2 * n] = np.conj(selection_bar[n : 2 * n]) * carrier
+     return selection_bar
+@@ -1435,9 +1472,9 @@ def _run_forward(optimized_parameters, host_arrays, taped):
+ 
+ def _run_backward(optimized_parameters, results, work, carrier_bar, signal_bar, noise_bar):
+     """The backward pass on the host, from the results and the work of the forward pass."""
+-    carrier, signal, noise, Y, MU = results
++    carrier, signal, noise, Yc, MU = results
+     entry_plan, plan, entries, tape, kept = work
+-    F = Y.shape[0]
++    F = signal.shape[1]
+     noise_bar = np.asarray(noise_bar, float).reshape(F)
+     entries_bar = backward(
+         plan,
+@@ -1446,7 +1483,7 @@ def _run_backward(optimized_parameters, results, work, carrier_bar, signal_bar,
+         carrier,
+         signal,
+         noise,
+-        Y,
++        Yc,
+         MU,
+         np.asarray(carrier_bar)[:, 0],
+         np.asarray(signal_bar),
+@@ -1518,7 +1555,7 @@ def _result_shapes(host):
+         jax.ShapeDtypeStruct((m, F), jnp.complex128),
+         jax.ShapeDtypeStruct((F,), jnp.float64),
+     )
+-    helpers = (jax.ShapeDtypeStruct((F, m), jnp.complex128), jax.ShapeDtypeStruct((F, m), jnp.complex128))
++    helpers = (jax.ShapeDtypeStruct((m, F), jnp.complex128), jax.ShapeDtypeStruct((m, F), jnp.complex128))
+     return outputs, helpers, noise_shape
+ 
+ 
+-- 
+2.53.0
+
