@@ -1,0 +1,26 @@
+ERROR:2026-11-21 07:08:01,456:jax._src.callback:94: jax.pure_callback failed
+Traceback (most recent call last):
+  File "/Users/maxjackle/Projekte/fayer-nacht/.venv/lib/python3.12/site-packages/jax/_src/callback.py", line 92, in pure_callback_impl
+    return tree_util.tree_map(np.asarray, callback(*args))
+                                          ^^^^^^^^^^^^^^^
+  File "/Users/maxjackle/Projekte/fayer-nacht/.venv/lib/python3.12/site-packages/jax/_src/callback.py", line 70, in __call__
+    return tree_util.tree_leaves(self.callback_func(*args, **kwargs))
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/maxjackle/Projekte/fayer-nacht/kandidaten/noel-6b67cfd/differometor/fast.py", line 1058, in _host_backward
+    entries_bar = backward(
+                  ^^^^^^^^^
+  File "/Users/maxjackle/Projekte/fayer-nacht/kandidaten/noel-6b67cfd/differometor/fast.py", line 907, in backward
+    lam = _signal_adjoint(plan, Z, signal_bar, general_adjoint)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/maxjackle/Projekte/fayer-nacht/kandidaten/noel-6b67cfd/differometor/fast.py", line 878, in _signal_adjoint
+    return general_adjoint(signal_bar)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/maxjackle/Projekte/fayer-nacht/kandidaten/noel-6b67cfd/differometor/fast.py", line 1048, in general_adjoint
+    raise NotImplementedError(
+NotImplementedError: The signal matrix has more constant entries than the fast path keeps for this reverse pass (1 per unknown). Raise differometor.fast.BASE_ENTRIES_PER_UNKNOWN or use differometor.simulate.simulate_jax.
+all outputs, random weights (general adjoint)    loss +2.238876103e+01 vs +2.238875998e+01   gradient vs JAX 5.83e-08
+benchmark-style readout                          loss +4.591399800e+04 vs +4.591399800e+04   gradient vs JAX 2.91e-11
+WORST 5.825298377959998e-08
+block sizes 1 and 2 against 16: largest deviation 0.00e+00
+small residual capacity, benchmark-style readout: gradient vs JAX 2.91e-11
+small residual capacity, general adjoint: fails with a clear message, as intended

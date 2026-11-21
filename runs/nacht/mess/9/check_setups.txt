@@ -1,0 +1,25 @@
+aLIGO space_modulation: path=fast, 46 optimized values
+  carrier      vs JAX 6.69e-13
+  signal       vs JAX 4.37e-11
+  noise        vs JAX 3.08e-12
+  sensitivity  vs JAX 1.75e-12
+  gradient     vs JAX 2.73e-10
+  aLIGO vs public test data: max |log diff| 2.88e-11 (example uses atol 1e-6)
+aLIGO frequency_modulation: path=fast, 46 optimized values
+  carrier      vs JAX 6.69e-13
+  signal       vs JAX 8.13e-10
+  noise        vs JAX 3.09e-12
+  sensitivity  vs JAX 1.07e-08
+  gradient     vs JAX 8.06e-10
+aLIGO amplitude_modulation (linked): path=jax, 46 optimized values
+  carrier      vs JAX 0.00e+00
+  signal       vs JAX 0.00e+00
+  noise        vs JAX 0.00e+00
+  sensitivity  vs JAX 0.00e+00
+  gradient     vs JAX 0.00e+00
+Voyager (qhd): path=jax, 74 optimized values
+  carrier      vs JAX 0.00e+00
+  signal       vs JAX 0.00e+00
+  noise        vs JAX 0.00e+00
+  sensitivity  vs JAX 0.00e+00
+  gradient     vs JAX 0.00e+00

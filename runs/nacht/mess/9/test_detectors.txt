@@ -1,0 +1,38 @@
+benchmark shapes (286,1) x (751,101)
+  signal_detector value                                2.07e-16
+  signal_detector vjp carrier                          3.64e-16
+  signal_detector vjp signal                           1.44e-16
+  power_detector value                                 0.00e+00
+  power_detector vjp                                   8.57e-17
+  jit(grad(readout)) carrier                           1.34e-16
+  jit(grad(readout)) signal                            2.86e-14
+1-D (5,) x (13,)
+  signal_detector value                                0.00e+00
+  signal_detector vjp carrier                          1.06e-16
+  signal_detector vjp signal                           0.00e+00
+  power_detector value                                 0.00e+00
+  power_detector vjp                                   4.82e-17
+  jit(grad(readout)) carrier                           1.84e-16
+  jit(grad(readout)) signal                            5.98e-18
+(4,3) x (11,3)
+  signal_detector value                                6.37e-17
+  signal_detector vjp carrier                          1.50e-16
+  signal_detector vjp signal                           1.96e-16
+  power_detector value                                 0.00e+00
+  power_detector vjp                                   1.19e-16
+  jit(grad(readout)) carrier                           6.57e-17
+  jit(grad(readout)) signal                            2.09e-16
+(4,1) x (8,1)
+  signal_detector value                                8.26e-17
+  signal_detector vjp carrier                          0.00e+00
+  signal_detector vjp signal                           0.00e+00
+  power_detector value                                 0.00e+00
+  power_detector vjp                                   2.85e-17
+  jit(grad(readout)) carrier                           0.00e+00
+  jit(grad(readout)) signal                            4.83e-16
+vmap
+  vmap signal_detector                                 1.06e-16
+  vmap power_detector                                  0.00e+00
+real input falls back to JAX: [0.  0.5 2. ]
+switch off -> forward mode works: (3,)
+WORST 2.8599003848290955e-14

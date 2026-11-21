@@ -1,0 +1,44 @@
+{
+ "best": {
+  "sha": "6b67cfd",
+  "label": "noel@6b67cfd",
+  "branch": "nacht/basis-1",
+  "worktree": "/Users/maxjackle/Projekte/fayer-nacht/kandidaten/noel-6b67cfd"
+ },
+ "noel_start": "c261b63",
+ "eigene_commits": [],
+ "gesehen": {
+  "origin/noel": "6b67cfd",
+  "origin/philip": "ab82e42",
+  "origin/max/lu-once": "79ae580",
+  "origin/main": "5eece1d",
+  "fork-Haniubub/main": "5eece1d",
+  "fork-Haniubub/philip": "ab82e42",
+  "fork-Haniubub/max/lu-once": "1ebed36",
+  "origin/Joel": "76e799f",
+  "origin/sx": "2c9e8bf",
+  "origin/sx2": "036194a",
+  "origin/sx2-env": "bf6bf60",
+  "origin/max/nacht": "f1000e9",
+  "fork-Haniubub/Joel": "5eece1d"
+ },
+ "naechste_nr": 11,
+ "runde": 4,
+ "start_runde": "2026-11-21T07:06:30+01:00",
+ "gepusht": {
+  "branch": "origin/max/nacht",
+  "sha": "f1000e9",
+  "zeit": "2026-11-21T03:25+01:00"
+ },
+ "aufbewahrt": {
+  "2-callback-haushalt": "verworfen/2-callback-haushalt.patch (bitgleich, Forward+Gradient -3,4 ms; Kandidat fuer Buendelung)",
+  "6-callback-paket": "verworfen/6-callback-paket.patch (in Nr. 7 enthalten)",
+  "8-threads": "Idee: gstrf/Solve-Schleife in ThreadPoolExecutor(3), Mikro -12 ms; Regelfrage an Max (analyse/r2/prof_thr.py)",
+  "9-import-auf-noel": "verworfen/9-import-auf-noel.patch (Import-Teil auf noel@dba2828, -0,6/-0,7 % Median, Pruefungen bitgleich zu noel)",
+  "10-profil-r4": "analyse/r4 (kein Hebel >= 5 ms ohne Regelfrage)"
+ },
+ "messhinweis": "Umgebung: PYTHONDONTWRITEBYTECODE=1, venv ohne .pyc. Mit PYTHONPYCACHEPREFIX=/Users/maxjackle/Projekte/fayer-nacht/pyc-messung First-Run ca. 368 statt 950 ms. Offizielle Entscheidungen weiter nach Anleitung (ohne .pyc); pyc-Messung nur als Zusatzinfo.",
+ "ende_runde_3": "2026-11-21T05:15+01:00",
+ "eigene_commits_hinweis": "f1000e9 ist in noel@6b67cfd enthalten (Merge 7279114), liegt weiter auf origin/max/nacht",
+ "ende_runde_4": "2026-11-21T07:14+01:00"
+}

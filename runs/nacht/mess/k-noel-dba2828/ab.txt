@@ -1,0 +1,9 @@
+                           basis              kandidat   (median / min, ms)
+TOTAL             932.7 /  927.2        925.3 /  921.1
+imports           717.4 /  712.4        719.8 /  717.2
+build              69.8 /   69.2         67.9 /   66.4
+compile            79.8 /   78.6         79.5 /   79.0
+forward            45.6 /   45.0         41.4 /   40.2
+gradient           19.1 /   18.7         17.4 /   16.9
+warm               54.8 /   54.4         48.6 /   48.1
+log error             5.3743e-06            5.3743e-06

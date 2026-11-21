@@ -1,0 +1,128 @@
+diff --git a/differometor/fast.py b/differometor/fast.py
+index fba76a7..b1ce6e0 100644
+--- a/differometor/fast.py
++++ b/differometor/fast.py
+@@ -422,8 +422,8 @@ class EntryPlan:
+ 
+ def _flat_nonzero(matrix):
+     """Flat indices of the nonzero entries of a complex matrix (faster than `np.flatnonzero`)."""
+-    parts = np.ascontiguousarray(matrix).view(np.float64).reshape(-1, 2) != 0
+-    return np.flatnonzero(parts[:, 0] | parts[:, 1])
++    parts = np.ascontiguousarray(matrix).view(np.float64).reshape(-1, 2)
++    return np.flatnonzero((parts[:, 0] != 0) | (parts[:, 1] != 0))
+ 
+ 
+ def _last_writer(rows, columns, width):
+@@ -470,6 +470,10 @@ class SystemPlan:
+         self.update_live = _last_writer(smi[0], smi[1], m + 1)
+         self.placing_positions = np.searchsorted(keys, key(placing[0], placing[1]))
+         self.placing_live = _last_writer(placing[0], placing[1], m + 1)
++        # Signal entry (or -1 for the base value) that sets each placing slot before the placement.
++        writer = np.full(rows.size, -1)
++        writer[self.update_positions[self.update_live]] = np.nonzero(self.update_live)[0]
++        self.placing_writer = writer[self.placing_positions]
+         # Entries that are complex-conjugated for the lower sideband (see `simulate`).
+         self.conjugated = (
+             ((rows >= n) & (rows < 2 * n) & (cols >= n) & (cols < 2 * n))
+@@ -508,15 +512,25 @@ class SystemPlan:
+         return _splu(n, M[self.carrier_rows, self.carrier_cols], self.carrier_rows, self.carrier_ptr), M[:, -1]
+ 
+     def signal_values(self, signal_entries, carrier):
+-        """Nonzero values of the augmented signal matrices, shape (F, size), plus placing pre-values."""
++        """Nonzero values of the augmented signal matrices, shape (F, size)."""
+         F = signal_entries.shape[0]
+-        V = np.broadcast_to(self.signal_base.astype(complex), (F, self.size)).copy()
++        V = np.empty((F, self.size), complex)
++        V[:] = self.signal_base
+         V[:, self.update_positions[self.update_live]] = signal_entries[:, self.update_live]
+-        pre = V[:, self.placing_positions].copy()
+-        live = self.placing_live
+-        V[:, self.placing_positions[live]] = -pre[:, live] * carrier[self.signal_carrier_indices[live]]
++        placed = self.placing_positions[self.placing_live]
++        V[:, placed] = -V[:, placed] * carrier[self.signal_carrier_indices[self.placing_live]]
+         V[:, self.conjugated] = np.conj(V[:, self.conjugated])
+-        return V, pre
++        return V
++
++    def signal_pre(self, signal_entries):
++        """Values of the placing slots before the placement, shape (F, placing count)."""
++        F = signal_entries.shape[0]
++        pre = np.empty((F, self.placing_positions.size), complex)
++        pre[:] = self.signal_base[self.placing_positions]
++        writer = self.placing_writer
++        written = writer >= 0
++        pre[:, written] = signal_entries[:, writer[written]]
++        return pre
+ 
+     def _set_order(self, values_row):
+         """Column order from COLAMD on one matrix, reused for all frequencies (shared pattern)."""
+@@ -591,7 +605,7 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
+     m = plan.m
+     carrier_lu, carrier_rhs = plan.carrier_matrix(carrier_entries)
+     carrier = carrier_lu.solve(carrier_rhs)
+-    V, _ = plan.signal_values(signal_entries, carrier)
++    V = plan.signal_values(signal_entries, carrier)
+     w = plan.detector_weights(carrier)
+     N = plan.noise_values(noise_entries)
+     F = V.shape[0]
+@@ -628,12 +642,16 @@ def forward(plan, carrier_entries, signal_entries, noise_entries):
+     return carrier, X, noise, Y, MU, Z
+ 
+ 
+-def _signal_adjoint(plan, V, Z, signal_bar):
+-    """lam_f = S_f^-T signal_bar_f for every frequency, shape (F, m)."""
++def _signal_adjoint(plan, signal_values, Z, signal_bar):
++    """lam_f = S_f^-T signal_bar_f for every frequency, shape (F, m).
++
++    `signal_values()` gives the signal matrices; they are only built when Z does not cover the support.
++    """
+     support = np.nonzero(np.any(signal_bar != 0, axis=0))[0]
+     d, k = plan.detector, plan.detector.size
+     if plan.use_basis and np.isin(support, d).all():
+         return np.einsum("fmk,fk->fm", Z[:, :, :k], signal_bar[:, d])
++    V = signal_values()
+     lam = np.empty(signal_bar.shape, complex)
+     for f in range(V.shape[0]):
+         lam[f] = plan.signal_lu(V[f]).solve(signal_bar[f].astype(complex), trans="T")
+@@ -644,14 +662,23 @@ def backward(plan, carrier_entries, signal_entries, carrier, X, noise, Y, MU, Z,
+     """Cotangents of the carrier, signal and noise entries (JAX's bilinear convention)."""
+     n, m = plan.n, plan.m
+     carrier_lu, _ = plan.carrier_matrix(carrier_entries)
+-    V, pre = plan.signal_values(signal_entries, carrier)
+-    F = V.shape[0]
+-    carrier_bar = carrier_bar.astype(complex).copy()
++    pre = plan.signal_pre(signal_entries)
++    F = signal_entries.shape[0]
++    carrier_bar = carrier_bar.astype(complex)
+     V_bar = np.empty((F, plan.size), complex)
+     g = noise_bar * NOISE_SCALE / noise  # d noise / d power
+     rows, cols = plan.rows[plan.in_matrix], plan.cols[plan.in_matrix]
+-    lam = _signal_adjoint(plan, V, Z, signal_bar)
+-    V_bar[:, plan.in_matrix] = -lam[:, rows] * X[:, cols] - 2 * g[:, None] * np.conj(Y[:, rows]) * MU[:, cols]
++    lam = _signal_adjoint(plan, lambda: plan.signal_values(signal_entries, carrier), Z, signal_bar)
++    # -lam X - 2 g conj(Y) MU on the matrix pattern, evaluated in place (same operation order).
++    first = lam[:, rows]
++    first *= X[:, cols]
++    np.negative(first, out=first)
++    second = Y[:, rows]
++    np.conj(second, out=second)
++    second *= 2 * g[:, None]
++    second *= MU[:, cols]
++    first -= second
++    V_bar[:, plan.in_matrix] = first
+     V_bar[:, ~plan.in_matrix] = lam[:, plan.rhs_rows]
+     w_bar = 2 * (g[:, None] * np.conj(MU)).sum(0)
+ 
+@@ -663,8 +690,10 @@ def backward(plan, carrier_entries, signal_entries, carrier, X, noise, Y, MU, Z,
+     live = plan.placing_live
+     placed = plan.placing_positions[live]
+     sci = plan.signal_carrier_indices[live]
+-    np.add.at(carrier_bar, sci, -(V_bar[:, placed] * pre[:, live]).sum(0))
+-    V_bar[:, placed] = -V_bar[:, placed] * carrier[sci]
++    placed_bar = V_bar[:, placed]
++    np.add.at(carrier_bar, sci, -(placed_bar * pre[:, live]).sum(0))
++    placed_bar *= carrier[sci]
++    V_bar[:, placed] = np.negative(placed_bar, out=placed_bar)
+     signal_entries_bar = np.zeros_like(signal_entries)
+     signal_entries_bar[:, plan.update_live] = V_bar[:, plan.update_positions[plan.update_live]]
+ 

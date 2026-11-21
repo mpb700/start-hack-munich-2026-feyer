@@ -1,0 +1,18 @@
+fast path value_and_grad (incl. trace/compile): 0.246 s
+  carrier      max |diff| / max |baseline| = 9.735e-12
+  signal       max |diff| / max |baseline| = 1.144e-07
+  noise        max |diff| / max |baseline| = 7.250e-08
+  sensitivity  max |diff| / max |baseline| = 2.165e-09
+  powers       max |diff| / max |baseline| = 1.394e-11
+  gradient     max |diff| / max |baseline| = 1.172e-08
+  gradient per-entry max rel = 1.008e+00; worst index 29
+  max |log sens - log ref| fast 5.374e-06  baseline 5.371e-06  (limit 1e-5)
+  eager vs jit signal: 0.0e+00
+original JAX on 3 frequencies with empty link arrays: 3.2 s
+  fast vs JAX (3 freqs) carrier      9.735e-12
+  fast vs JAX (3 freqs) signal       6.905e-08
+  fast vs JAX (3 freqs) noise        6.328e-08
+  fast vs JAX (3 freqs) sensitivity  1.025e-09
+  fast vs JAX (3 freqs) gradient     4.782e-07
+  baseline sensitivity at those freqs vs JAX: 1.140e-09
+  grad w.r.t. frequencies, dispatcher vs JAX: 0.0e+00

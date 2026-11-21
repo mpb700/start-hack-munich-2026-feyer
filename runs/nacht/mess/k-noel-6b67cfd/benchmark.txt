@@ -1,0 +1,35 @@
+Initialize CPU backend: 0.002439 s
+CPU: Apple M2 Pro; affinity: unknown; devices: [CpuDevice(id=0)]
+Read and parse public inputs: 0.001815 s
+Build optical setup and prepare inputs: 0.063618 s
+Workload: 101 frequencies; 193 physical design variables; no optimizer
+Forward: trace / lower: 0.004268 s
+Forward: compile: 0.004162 s
+Forward simulation + AD residuals: 0.034963 s
+Sensitivity: trace / lower: 0.012142 s
+Sensitivity: compile: 0.029492 s
+Sensitivity, powers and scalar loss: 0.000855 s
+Gradient: trace / lower: 0.005852 s
+Gradient: compile: 0.022878 s
+Reverse-mode gradient: 0.012876 s
+Transfer results to host: 0.000097 s
+Complete first-run total (excluding validation): 0.922329 s
+Forward: 0.031128 s
+Sensitivity: 0.000417 s
+Gradient: 0.011615 s
+Host transfer: 0.000073 s
+Repeat 01/3: 0.043233 s
+Forward: 0.029391 s
+Sensitivity: 0.000457 s
+Gradient: 0.010739 s
+Host transfer: 0.000060 s
+Repeat 02/3: 0.040647 s
+Forward: 0.029213 s
+Sensitivity: 0.000364 s
+Gradient: 0.010768 s
+Host transfer: 0.000061 s
+Repeat 03/3: 0.040407 s
+Validating outputs, reference sensitivity and finite-difference gradient...
+PASS: reference sensitivity and gradient spot check; full runtime median 0.040647 s
+JSON: /Users/maxjackle/Projekte/fayer-muc/runs/nacht/mess/k-noel-6b67cfd/check.json
+Plot: /Users/maxjackle/Projekte/fayer-muc/runs/nacht/mess/k-noel-6b67cfd/check.png

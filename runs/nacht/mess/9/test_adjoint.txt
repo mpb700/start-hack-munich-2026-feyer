@@ -1,0 +1,3 @@
+all outputs, random weights (general adjoint)    loss +2.238876103e+01 vs +2.238875998e+01   gradient vs JAX 5.83e-08
+benchmark-style readout                          loss +4.591399800e+04 vs +4.591399800e+04   gradient vs JAX 2.91e-11
+WORST 5.825298377959998e-08

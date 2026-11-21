@@ -1,0 +1,9 @@
+                           basis              variante   (median / min, ms)
+TOTAL             367.5 /  356.5        362.9 /  358.4
+imports           180.1 /  173.8        180.9 /  177.2
+build              39.1 /   37.3         38.6 /   37.9
+compile            80.3 /   78.9         79.5 /   78.8
+forward            47.1 /   45.4         45.7 /   44.6
+gradient           21.4 /   20.9         19.5 /   18.9
+warm               59.5 /   58.6         55.5 /   54.4
+log error             5.3745e-06            5.3743e-06

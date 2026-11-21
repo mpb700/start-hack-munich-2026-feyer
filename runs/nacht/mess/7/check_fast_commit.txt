@@ -1,0 +1,12 @@
+  gradient     max |diff| / max |baseline| = 1.035e-08
+  gradient per-entry max rel = 1.008e+00; worst index 29
+  max |log sens - log ref| fast 5.374e-06  baseline 5.371e-06  (limit 1e-5)
+  eager vs jit signal: 0.0e+00
+original JAX on 3 frequencies with empty link arrays: 3.1 s
+  fast vs JAX (3 freqs) carrier      9.735e-12
+  fast vs JAX (3 freqs) signal       6.885e-08
+  fast vs JAX (3 freqs) noise        6.245e-08
+  fast vs JAX (3 freqs) sensitivity  9.752e-10
+  fast vs JAX (3 freqs) gradient     5.485e-07
+  baseline sensitivity at those freqs vs JAX: 1.140e-09
+  grad w.r.t. frequencies, dispatcher vs JAX: 0.0e+00

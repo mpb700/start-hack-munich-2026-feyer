@@ -1,0 +1,20 @@
+diff --git a/differometor/fast.py b/differometor/fast.py
+index fba76a7..1a83c38 100644
+--- a/differometor/fast.py
++++ b/differometor/fast.py
+@@ -519,8 +519,13 @@ class SystemPlan:
+         return V, pre
+ 
+     def _set_order(self, values_row):
+-        """Column order from COLAMD on one matrix, reused for all frequencies (shared pattern)."""
+-        first = _splu(self.m, values_row[self.in_matrix], self.matrix_rows, self.matrix_ptr)
++        """
++        Column order from SuperLU's MMD_ATA on one matrix, reused for all frequencies (shared pattern).
++
++        For the benchmark setup MMD_ATA gives about 4 % fewer stored factor entries than COLAMD
++        (7916 vs 8233 per frequency); MMD_AT_PLUS_A more than doubles them.
++        """
++        first = _splu(self.m, values_row[self.in_matrix], self.matrix_rows, self.matrix_ptr, "MMD_ATA")
+         order = np.argsort(first.perm_c)
+         counts = np.diff(self.matrix_ptr)[order]
+         self.ordered_ptr = np.concatenate([[0], np.cumsum(counts)]).astype(np.intc)
