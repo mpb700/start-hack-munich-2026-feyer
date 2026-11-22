@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 02:33, nach Runde 26. **Meine vier Geschwindigkeits-Patches sind seit 02:31 auf `main` (`68915ee`, `0dd3d4b`, `712043f`, `be2eb21`), auf Noels ausdrückliches Ja gepusht.** `main` steht damit auf `be2eb21` und enthält alles, was diese Schleife für Philips Linie gebaut hat, ausser dem Dockerfile-Patch (nur Messumgebung, weiter in `patches/`). Was fehlt: eine Messung dieses Stands auf dem Xeon durch Philip (letzte Zahl dort für `50c8008`: Gitter 250 ms, aLIGO 215 ms; meine Schätzung für die vier Patches: 5 bis 7 ms). Die Abschnitte «Runde 19» bis «Runde 25» erzählen, wie die Patches entstanden und geprüft wurden.
+Stand: So 22.11.2026, 03:45, nach Runde 27. **Neu: `patches/philip-fastest-carrier.patch` (Carrier-System über den C-Kern, SuperLU wird auf x86 nicht mehr geladen), geprüft, noch nicht auf `main`.** Dazu drei gemessene Vorschläge, die Noels Ja brauchen und nur im Scratchpad liegen (siehe «Runde 27»). `main` steht unverändert auf `e770ba2` (Code wie `be2eb21`, Xeon laut Philip: Gitter 236 ms, aLIGO 210 ms).
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -111,6 +111,7 @@ Noel um 21:02 auf die Frage, ob die Schleife Patches für Philips Stand bauen so
 | [`patches/philip-fastest-memory.patch`](patches/philip-fastest-memory.patch) | Speicher (`fast.py`): Carrier-System ohne dichte Felder, `signal_values` und der Rückwärtslauf bilden ihre Produkte in Blöcken von 128 Zeilen statt über ganze Zwischenfelder. **Nach Rows und Import anwenden** | Seitenfehler im ersten Aufruf auf x86-64 mit C-Kern (alle drei Patches gegen `9a31fa1`): Vorwärts **5'703 → 4'028**, Rückwärts **1'996 → 1'313**. Host-Zeiten M4 warm: `signal_values` 0,52 → 0,45 ms, Rückwärts-Callback 1,68 → 1,50 ms. **Xeon: noch nicht gemessen** | **auf `main` seit 22.11. 02:31 (`712043f`)** |
 
 | [`patches/philip-fastest-store.patch`](patches/philip-fastest-store.patch) | Vorwärtslauf (`fast.py`): Die Signal-Einträge werden direkt in die Zeilen des Wertefelds der Signalmatrizen geschrieben statt erst in ein eigenes Feld (3 MB) und von dort hinüberkopiert. **Nach Rows, Import und Memory anwenden** | Seitenfehler im ersten Vorwärts-Aufruf (x86-64, C-Kern): **4'028 → 3'562**. Zeiten an der Messgrenze: x86 emuliert, 8 Läufe, warm Forward 16,1 → 15,4 ms, Forward-Phase im Erstlauf 50,6 → 49,9 ms. Auf arm64 kein Unterschied. **Xeon: noch nicht gemessen**, Schätzung 0,5 ms | **auf `main` seit 22.11. 02:31 (`be2eb21`)** |
+| [`patches/philip-fastest-carrier.patch`](patches/philip-fastest-carrier.patch) | Carrier-System (`fast.py`): mit `NATIVE_LU` zerlegt der C-Kern auch die eine Carrier-Matrix (`_SingleLU`), SuperLU wird erst bei Bedarf geladen und auf x86 gar nicht mehr. Basis `main` `e770ba2` | x86-64 emuliert, je 8 Läufe im Wechsel: Gitter-Erstlauf **470,2 → 464,5 ms** (Forward 38,9 → 34,6, Imports 331,6 → 330,4), zweite Reihe 486,2 → 478,1; aLIGO **462,8 → 455,1 ms**. Laden von SuperLU allein: 0,7 ms (arm64-Linux), 1,8 ms emuliert. Ohne C-Kern (arm64, Mac) neutral, Arrays dort bitgleich. **Xeon: nicht gemessen**, Schätzung 1,5 bis 2,5 ms | **offen**, siehe «Runde 27» |
 | [`patches/philip-fastest-dockerfile.patch`](patches/philip-fastest-dockerfile.patch) | Nur Messumgebung (`Dockerfile`, `.dockerignore`): kein `PYTHONDONTWRITEBYTECODE` beim Installieren, `__pycache__` bleibt im Image. Unabhängig von den anderen Patches | Derselbe Code (`9a31fa1`), 6 Läufe im Wechsel, Docker arm64 `--cpus 1`: Imports **248,3 → 113,2 ms**, Erstlauf 320,0 → 187,0 ms. Ausserhalb von Docker ändert sich nichts | **offen**, siehe «Runde 19», Punkt 2 |
 
 | Verknüpfte Parameter (Max, `origin/max/links`) | Abdeckung: Amplitudenmodulation bei aLIGO, Voyager und UIFO über den schnellen Weg | aLIGO mit Amplitudenmodulation, Erstlauf M4: 9'723 → 435 ms. Philips Xeon-Zahl: 233 ms | **auf `main` seit 22.11. 01:58 (`50c8008`)**, von Max selbst gepusht. Mein Patch dazu ist entfernt |
@@ -156,6 +157,33 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 27 (22.11., 02:49 bis 03:45): Carrier-Patch, drei Vorschläge mit Zahlen.** Noel um 02:40: «kannst du noch was weiter verbesser». Basis `main` `e770ba2`, andere Branches um 03:29 unverändert.
+
+*Behalten: `patches/philip-fastest-carrier.patch`* (lokal `cdfdd44`, Anwenden: `git show origin/noel:runs/noel/patches/philip-fastest-carrier.patch | git am`).
+
+- Der C-Kern nimmt alle 18 Test-Carrier-Systeme an (Fixture, aLIGO in drei Modi, Voyager, 13 Zufallsgitter). Residuum höchstens 4e-16 (SuperLU 1,5e-16), Abstand zur dichten Lösung wie bei SuperLU (Fixture 1,0e-11 bei Kondition 3,7e5).
+- Arrays auf x86 gegen `main`: Gitter Carrier 5,0e-13, Signal 1,3e-09, Noise 1,2e-09, Sensitivity 3,5e-12, Gradient 3,1e-11, Fehler gegen die Referenz 5,374278e-06 → 5,374282e-06. aLIGO höchstens 1,2e-11, Fehler 2,88e-11 → 2,99e-11. Auf dem Mac alles bitgleich.
+- Geprüft: beide Benchmarks `PASS` (Mac, x86-Image), alle 15 Prüfskripte auf dem Mac und im x86-Image, neu `runs/noel/test_carrier.py` (Genauigkeit, beide Rückfälle, SuperLU bleibt ungeladen), zehn Setup-Varianten im x86-Image `PASS` mit unveränderten Fehlern. Bytecode von `fast.py` neu, alle 16 `.pyc` gültig.
+- Nebenwirkung: Auf dem gewerteten Weg ist die Regelfrage A8 (SuperLU direkt aus SciPy laden) gegenstandslos.
+
+*Verworfen (mit Zahlen):*
+
+| Versuch | Ergebnis |
+| --- | --- |
+| Früher Abbruch der Pivot-Suche im C-Kern (gleiche Pivotfolge) | Pivotfolgen und Ergebnisse auf 18 Setups identisch, aber nur 279'486 → 270'038 geprüfte Einträge (3 %). Die Suchzeit (1,9 von 14 ms warm) steckt in Schritten, deren billige Kandidaten die Stabilitätsprüfung nicht bestehen. Philips `libpattern_lu.so` lässt sich mit gcc 13.3.0 (Ubuntu 24.04) bitgleich nachbauen |
+| Rausch-Summen ohne Zwischenkopien | bitgleich, im Einzelprofil 3'533 → 3'027 Seitenfehler, im Wechselvergleich kein Gewinn (Forward schneller, Gradient-Phase 1,3 ms langsamer) |
+| `cos` + `sin` statt komplexem `exp` in den Bauteil-Formeln (66'862 Aufrufe pro Vorwärtslauf) | ohne AVX-512 gleich schnell und bitgleich (12,1 gegen 11,7 ns, emuliert 31,7 gegen 30,8). NumPy hat für AVX-512 eigene Schleifen (`DOUBLE_sin_X86_V4`), auf dem Xeon wären es vielleicht 1,5 ms. Hier nicht messbar, darum nicht gebaut |
+
+*Drei Vorschläge, nur gemessen, nicht ausgeliefert* (Regel: Eingriffe in Start, Imports und JAX-nahe Teile nur mit Noels Ja). Lokale Commits auf dem Carrier-Stand, Patches und `test_vorschlag.py` im Scratchpad (`r27/vorschlag/`), alle 16 Prüfskripte auf dem Mac grün:
+
+| Vorschlag | Datei | Gemessen | Haken |
+| --- | --- | --- | --- |
+| A. Interpreter kennt `pad` und `add_any` | `_interpret.py` (Max) | **Fund:** Bei zwei Detektor-Ports (Balanced Homodyne) fällt das Gradient-Programm aus dem Interpreter und geht durch MLIR und XLA. Homodyne-Variante, arm64-Linux, je 8 Läufe: Erstlauf 159,2 → **147,4 ms** (Gradient-Lower 6,1 → 1,3, Kompilieren 7,3 → 0). Emuliert kostet die Lücke rund 450 ms. Schätzung Xeon: 15 bis 20 ms | wirkt nur bei Homodyne-Setups, die zwei offiziellen Benchmarks lesen einen Port |
+| B. `jax.experimental.multihost_utils` bleibt lazy | `_startup.py` (Philip) | Das Modul steht in `LAZY_MODULES`, wird aber beim ersten `jnp.asarray` doch ausgeführt, weil der Finder dann schon weg ist. Erstes `asarray` 1,8 bis 2,1 → 0,3 ms, Build-Phase 9,8 → 8,3 ms (arm64-Linux). Schätzung Xeon: 3 ms | Import-Massnahme |
+| C. Heap in grossen Schritten (`mallopt`, dazu `MADV_HUGEPAGE`) | `_startup.py` (Philip) | Seitenfehler eines Laufs (x86 emuliert): Imports 15'072 → 11'053, Forward 3'702 → 99, Gradient 1'227 → 22. Erstlauf arm64-Linux 159,7 → **151,1 ms**, ohne Huge Pages 158,0 → 152,4; emuliert 482,3 → 467,9 | Regelfrage B6 (`mallopt`). Wirkung hängt von der Huge-Page-Einstellung des Xeon ab, **braucht eine Messung dort**. Philips Fehlversuch 5 hatte nur die Schwellen, ohne grosse Schritte |
+
+Weiter offen und nicht gebaut: MLIR-Bindungen beim Import (rund 9 ms in Docker, tiefer Eingriff), JAX-eigene jit-Funktionen beim Tracing direkt aufrufen (0,7 ms auf dem M4).
 
 **Runde 26 (22.11., 02:28 bis 02:33): die vier Patches auf `main` gepusht.** Noel um 02:27 auf meine Frage, ob ich sie pushen soll: «Ja, auf main pushen».
 
