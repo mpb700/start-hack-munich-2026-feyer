@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 09:45, nach Runde 35. **`origin/max/next` (`67f0055`) unabhängig auf x86 mit C-Kern geprüft: beide Benchmarks `PASS`, Arrays bitgleich zu `main`, zehn Setup-Varianten `PASS`, in den Minima klar schneller.** `main` steht weiter auf `a2799ba` (mit Carrier-Patch); `max/next` enthält dazu meinen Patch `lazy-late`. Vorschlag C (Heap) ist auf `max/next` nachgemessen, aber weiter nicht gebaut (braucht Noels Ja und eine Xeon-Messung). Ab 10:00 Feature-Freeze.
+Stand: So 22.11.2026, 09:40, nach Runde 35. **`origin/max/next` (`67f0055`) unabhängig auf x86 mit C-Kern geprüft: beide Benchmarks `PASS`, Arrays bitgleich zu `main`, zehn Setup-Varianten `PASS`, in den Minima klar schneller.** `main` steht weiter auf `a2799ba` (mit Carrier-Patch); `max/next` enthält dazu meinen Patch `lazy-late`. Vorschlag C (Heap) ist auf `max/next` nachgemessen, aber weiter nicht gebaut (braucht Noels Ja und eine Xeon-Messung). Ab 10:00 Feature-Freeze.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -159,7 +159,7 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
 
-**Runde 35 (22.11., 09:17 bis 09:45): `max/next` auf x86 geprüft, Heap darauf nachgemessen.** Noel um 09:17: «Los, geh nochmals voll rein».
+**Runde 35 (22.11., 09:28 bis 09:40): `max/next` auf x86 geprüft, Heap darauf nachgemessen.** Noel um 09:27: «Los, geh nochmals voll rein».
 
 *Eigener Code.* Build-Schritt profiliert (3,39 ms auf dem M4): `build()` selbst 1,1 ms, 2'484 `np.array`-Aufrufe 0,9 ms, `_sideband_layout` 0,8 ms, `pairs_to_arrays` 0,5 ms, `set_instructions` 0,35 ms (Profil, also überhöht). Kein einzelner Posten, der sich bis zum Freeze sicher umbauen und über 27 Setups prüfen liesse. Nichts geändert.
 
@@ -1140,7 +1140,7 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.
 - Discord (Noel am 21.11. gegen 14:35): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:13: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
 - Noel am 21.11. um 20:54: caffeinate wieder starten, Schleife alle 30 Minuten (:13 und :43).
-- Noel am 22.11. um 09:17: «Los, geh nochmals voll rein». Verstanden als Auftrag für eine volle Runde innerhalb der bisherigen Regeln, nicht als Ja zu Vorschlag C oder zu einem Push auf `main`.
+- Noel am 22.11. um 09:27: «Los, geh nochmals voll rein». Verstanden als Auftrag für eine volle Runde innerhalb der bisherigen Regeln, nicht als Ja zu Vorschlag C oder zu einem Push auf `main`.
 - Noel am 22.11. um 05:15: «Iterier jede Stunde drüber». Neue stündliche Schleife (Minute :07), `caffeinate` läuft wieder. Regeln wie bisher, Basis ist `origin/main`.
 - Noel am 22.11. um 04:10: «Hör danach auf mit der Schleife, es reicht». Auftrag `01bbf197` gelöscht, keine weiteren Runden.
 - Noel am 22.11. um 04:00: «Ja, B als Patch» (ein JAX-Modul bleibt lazy). Freigabe für den Patch auf `noel`, nicht für `main`.
