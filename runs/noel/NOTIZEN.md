@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 09:52, nach Runde 36. **Neu auf Noels Ja: Vorschlag C als Patch**, `patches/max-next-heap.patch` (Basis `origin/max/next` `67f0055`) und `patches/philip-fastest-heap.patch` (Basis `main` `a2799ba` nach `lazy-late`). Nicht auf `main`, nicht auf dem Xeon gemessen, Regelfrage B6 offen. `max/next` ist auf x86 mit C-Kern vollständig geprüft (22 von 22 Skripten grün, Arrays bitgleich zu `main`). Ab 10:00 Feature-Freeze: Die Schleife prüft nur noch den Stand.
+Stand: So 22.11.2026, 10:15, nach Runde 37 (Feature-Freeze seit 10:00: nur noch Abgleich, alle Branches unverändert). Davor Runde 36. **Neu auf Noels Ja: Vorschlag C als Patch**, `patches/max-next-heap.patch` (Basis `origin/max/next` `67f0055`) und `patches/philip-fastest-heap.patch` (Basis `main` `a2799ba` nach `lazy-late`). Nicht auf `main`, nicht auf dem Xeon gemessen, Regelfrage B6 offen. `max/next` ist auf x86 mit C-Kern vollständig geprüft (22 von 22 Skripten grün, Arrays bitgleich zu `main`). Ab 10:00 Feature-Freeze: Die Schleife prüft nur noch den Stand.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -159,6 +159,8 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 37 (22.11., 10:14 bis 10:15): Abgleich im Feature-Freeze, nichts gebaut.** Alle Branches unverändert seit 09:42: `main` `a2799ba`, `max/next` `67f0055` (nicht auf `main`), `philip-fastest` `3c0828f`, `philip` `c29332c`. Die Patches `lazy-late` und `dockerfile` passen auf `main`, `max-next-heap` passt auf `max/next`. Offen bleiben die Xeon-Messungen (`73d2075`, `max/next`, Heap-Patch) und der Entscheid, was auf `main` kommt. Akku 60 %, der Mac hängt nicht am Strom.
 
 **Runde 36 (22.11., 09:42 bis 09:52): Vorschlag C als Patch.** Noel um 09:41 auf meine Frage, ob C noch als Patch auf `noel` soll (meine Empfehlung war nein): «Ja, C als Patch». Das ist sein Ja für den Patch auf `noel`, nicht für `main`.
 
