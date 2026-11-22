@@ -1,4 +1,4 @@
-From c13af57a70cf96083ed43939a98e34c04d7a498c Mon Sep 17 00:00:00 2001
+From 78e6e28cfaf425d5d206f67ce7bcfa27c831242d Mon Sep 17 00:00:00 2001
 From: Noel Blatter <noel.blatter@gmail.com>
 Date: Sun, 22 Nov 2026 00:13:05 +0100
 Subject: [PATCH] Signal entries go straight into the value store of the signal
