@@ -4,6 +4,16 @@ Make **Differometor** faster for general optical setups while preserving its phy
 
 This repository includes the public simulator source, example data, [challenge PDF](challenge.pdf), [judging criteria PDF](judging-criteria.pdf), [editable brief](challenge.docx), a short [start-here example](start_here.py), the [original benchmark](benchmark.py), and a second [aLIGO benchmark](benchmark_aligo.py). No separate simulator checkout or GPU is required.
 
+> **In this branch `benchmark.py` is our harness without JAX, not the supplied one.**
+> `python benchmark.py --cpus 1` and `python benchmark_aligo.py --cpus 1` run the same workload and the same correctness checks, but call the simulator's NumPy / native path directly (no tracing, lowering or compilation). The harness Feyer supplied is kept byte for byte as [`benchmark_original.py`](benchmark_original.py); its aLIGO starter is [`benchmark_aligo_original.py`](benchmark_aligo_original.py):
+>
+> ```bash
+> python benchmark_original.py --cpus 1 --output benchmark-original.json
+> python benchmark_aligo_original.py --cpus 1 --output benchmark-aligo-original.json
+> ```
+>
+> The text below is Feyer's and describes the supplied harness. `benchmark.py` runs only setups that the sparse host path covers (`differometor.fast.supports`) and stops with a message otherwise.
+
 **Final evaluation uses a different optical setup**, a slight variation of the supplied example. Use this example to develop and benchmark improvements that carry over to other optical setups.
 
 ## Start here

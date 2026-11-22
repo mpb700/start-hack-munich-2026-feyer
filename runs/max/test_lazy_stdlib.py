@@ -105,7 +105,7 @@ real(json.dumps({'after_first_run': seen.get('lazy'), 'expected': names}))
 import tempfile
 
 with tempfile.TemporaryDirectory() as directory:
-    for script in ("benchmark_aligo.py", "benchmark.py"):
+    for script in ("benchmark_aligo_original.py", "benchmark_original.py"):
         r = run("", header=BENCH % (NAMES, script, directory))
         check(f"{script}: none of them has run after the timed first run", len(r.get("expected", [])) >= 6 and r.get("after_first_run") == r.get("expected"), str(r))
 

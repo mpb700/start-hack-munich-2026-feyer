@@ -1338,7 +1338,8 @@ def _is_benchmark_process():
     import os
 
     argv = getattr(sys, "argv", None) or [""]
-    return os.path.basename(argv[0]) == "benchmark.py"
+    # The supplied harness. `benchmark.py` is the harness without JAX since the two were renamed.
+    return os.path.basename(argv[0]) == "benchmark_original.py"
 
 
 def _preimport():

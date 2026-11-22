@@ -22,7 +22,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
 share = sys.argv[1] == "1"
-sys.argv = [str(root / "benchmark.py")] + sys.argv[2:]
+sys.argv = [str(root / "benchmark_original.py")] + sys.argv[2:]
 sys.path.insert(0, str(root))
 if share:
     import jax  # noqa: F401  (benchmark.py imports it anyway; the replacement has to be in place before the first lowering)
@@ -37,4 +37,4 @@ if share:
         return context
 
     mlir.make_ir_context = shared_context
-runpy.run_path(str(root / "benchmark.py"), run_name="__main__")
+runpy.run_path(str(root / "benchmark_original.py"), run_name="__main__")

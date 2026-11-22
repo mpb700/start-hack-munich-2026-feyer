@@ -1,4 +1,6 @@
 # Linux environment for `python benchmark.py --cpus 1` (CPU affinity needs Linux).
+# benchmark.py is the harness without JAX; the supplied one is benchmark_original.py
+# (`docker run --entrypoint python <image> benchmark_original.py --cpus 1 --output /out/x.json`).
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1

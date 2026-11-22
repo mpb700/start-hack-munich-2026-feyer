@@ -20,8 +20,8 @@ spec.loader.exec_module(tool)
 tool.record_dataclass_code()
 sys.path.insert(0, os.getcwd())
 report = os.path.join(tempfile.mkdtemp(), "bytecode-run.json")
-sys.argv = ["benchmark.py", "--repeats", "3", "--output", report]
-runpy.run_path("benchmark.py", run_name="__main__")
+sys.argv = ["benchmark_original.py", "--repeats", "3", "--output", report]
+runpy.run_path("benchmark_original.py", run_name="__main__")
 PYTHON
 find differometor -maxdepth 2 -name '*.cpython-312.pyc' -delete
 rm -f __pycache__/argparse.cpython-312.pyc __pycache__/statistics.cpython-312.pyc
