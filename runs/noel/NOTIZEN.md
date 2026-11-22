@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 04:15, nach Runde 30. **Die Schleife läuft seit 05:16 wieder, jetzt stündlich** (Noel: «Iterier jede Stunde drüber»; davor um 04:10 beendet, Auftrag `01bbf197` gelöscht). Ab So 10:00 gilt der Feature-Freeze. `main` steht auf `a2799ba` (Code wie `73d2075`, mit Carrier-Patch). **Offen als Patch auf `noel`: `patches/philip-fastest-lazy-late.patch`** (auf Noels Ja gebaut, nicht auf `main`). Vorschlag C (Heap) liegt nur im Scratchpad, Vorschlag A baut Max auf `origin/max/next`. Xeon-Messungen für `73d2075` und den neuen Patch fehlen.
+Stand: So 22.11.2026, 06:20, nach Runde 31 (nur Abgleich, nichts gebaut). **Die Schleife läuft seit 05:16 wieder, jetzt stündlich** (Noel: «Iterier jede Stunde drüber»; davor um 04:10 beendet, Auftrag `01bbf197` gelöscht). Ab So 10:00 gilt der Feature-Freeze. `main` steht auf `a2799ba` (Code wie `73d2075`, mit Carrier-Patch). **Offen als Patch auf `noel`: `patches/philip-fastest-lazy-late.patch`** (auf Noels Ja gebaut, nicht auf `main`). Vorschlag C (Heap) liegt nur im Scratchpad, Vorschlag A baut Max auf `origin/max/next`. Xeon-Messungen für `73d2075` und den neuen Patch fehlen.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -158,6 +158,14 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 31 (22.11., 06:13 bis 06:20): Abgleich, nichts gebaut.**
+
+- *Stand der Branches um 06:13:* alles unverändert seit 04:00. `main` `a2799ba`, `max/next` `8fb61ed` (nicht auf `main`), `philip-fastest` `3c0828f`, `philip` `c29332c`, `Joel`, `sx*`, übrige `max/*` wie zuvor.
+- Die offenen Patches `lazy-late` und `dockerfile` lassen sich weiter auf `main` anwenden (`git apply --check`).
+- Hebel geprüft: die beiden Pläne, die jeder Vorwärtslauf baut. `EntryPlan` 0,37 ms, `SystemPlan` 0,37 ms (M4, Median aus 300), verteilt auf rund 90 kleine NumPy-Aufrufe (`unique`, `nonzero`, `searchsorted`, `sort`), kein einzelner Posten über 0,06 ms. Ein Umbau brächte höchstens 0,2 bis 0,4 ms auf dem M4, das liegt unter der Streuung der Forward-Phase im Wechselvergleich (±0,3 ms). Nicht gebaut.
+- Damit kein Hebel im eigenen Code mit messbarem Gewinn. Offen bleiben die Xeon-Messungen (`73d2075`, Patch `lazy-late`) und Vorschlag C (braucht Noels Ja).
+- Der Mac läuft seit einiger Zeit auf Akku (89 % um 06:13).
 
 **Runde 30 (22.11., 04:00 bis 04:15): Patch «lazy-late», Schleife beendet.** Noel um 04:00: «Ja, B als Patch». Das ist sein Ja für diese Start-Massnahme als Patch auf `noel`, nicht für `main`.
 
