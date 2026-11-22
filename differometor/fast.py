@@ -331,6 +331,91 @@ def _rebind_component_functions():
 FUNCTIONS_NUMPY = _rebind_component_functions()
 
 
+# Experiment, off by default: with `NATIVE_ENTRIES` the component formulas and their derivatives
+# come from the C++ kernel in `_native/entries.cpp` instead of the dual-number evaluation above.
+# The formulas there are the ones of components.py written out again (`_native/test_entries.py`
+# compares the two: they agree to 4e-16 on x86-64). The kernel evaluates element by element,
+# every row of the sweep on its own. The NumPy evaluation above computes everything that does
+# not depend on the sweep once per call and the rest with NumPy's loops over whole arrays, and
+# that is faster: on the Xeon Platinum 8468 the entries of the grid benchmark take 4.1 ms with
+# NumPy and 17.0 ms with this kernel (forward pass 15.4 ms against 28.5 ms). To be worth it the
+# kernel would have to work on whole rows as well, and then it does the same arithmetic as NumPy.
+# DIFFEROMETOR_NATIVE_ENTRIES=1 in the environment switches it on (the library has to be built
+# first, `_native/build_entries.sh`). The switch is read in every evaluation. When the library
+# is missing or does not know a function, the NumPy path does the work.
+NATIVE_ENTRIES = os.environ.get("DIFFEROMETOR_NATIVE_ENTRIES", "0") == "1"
+
+_entries_library = None  # None: not tried yet, False: unavailable
+
+
+def _entries_kernel():
+    """The native formula kernel as a ctypes library, or None when it cannot be loaded."""
+    global _entries_library
+    if _entries_library is None:
+        try:
+            import ctypes
+
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_native", "libentries.so")
+            library = ctypes.PyDLL(path)  # keeps the GIL: the kernel has one work area
+            library.ent_function.argtypes, library.ent_function.restype = [ctypes.c_char_p], ctypes.c_int
+            library.ent_eval.argtypes = [ctypes.c_int] * 4 + [ctypes.c_void_p] * 7
+            library.ent_eval.restype = ctypes.c_int
+            library.identifiers = [library.ent_function(function.__name__.encode()) for function in components.FUNCTIONS]
+            library.pointers, library.addressof = ctypes.c_void_p * 7, ctypes.addressof
+            _entries_library = library
+        except Exception:
+            _entries_library = False
+    return _entries_library or None
+
+
+def _native_entries(function_index, arguments, lead, swept, columns, parts):
+    """
+    One group of calls of a component function in the native kernel.
+
+    Returns the values of the outputs that are read, shape (outputs read, calls, rows), their
+    derivatives with respect to the inputs `columns`, shape (outputs read, columns, calls, rows),
+    and the flags of all four outputs (see `ent_eval`). None when the kernel cannot do it.
+    """
+    library = _entries_kernel()
+    if library is None or len(arguments) != 7 or swept.size != 7:
+        return None
+    identifier = library.identifiers[function_index]
+    if identifier < 0:
+        return None
+    members, rows = lead
+    inputs = [np.ascontiguousarray(argument, np.float64) for argument in arguments]
+    for j, argument in enumerate(inputs):
+        if argument.shape != (members, rows if swept[j] else 1):
+            return None
+    width = len(columns)
+    direction = np.full(7, -1, np.intc)
+    direction[columns] = np.arange(width, dtype=np.intc)
+    slot = np.full(4, -1, np.intc)
+    for position, part in enumerate(parts):
+        slot[part[0]] = position
+    values = np.empty((len(parts), members, rows), complex)
+    tangents = np.empty((len(parts), width, members, rows), complex)
+    flags = np.zeros(4, np.intc)
+    swept_flags = np.ascontiguousarray(swept, np.intc)
+    addresses = library.pointers(*[argument.ctypes.data for argument in inputs])  # kept alive during the call
+    status = library.ent_eval(
+        identifier,
+        members,
+        rows,
+        width,
+        library.addressof(addresses),
+        swept_flags.ctypes.data,
+        direction.ctypes.data,
+        slot.ctypes.data,
+        values.ctypes.data,
+        tangents.ctypes.data,
+        flags.ctypes.data,
+    )
+    if status:
+        return None
+    return values, tangents, flags
+
+
 def _group_sum(values, order, starts):
     """Sum the rows of `values` (E, R) that share a target slot (`order`/`starts` from `_grouping`)."""
     return np.add.reduceat(values[order], starts, axis=0)
@@ -444,6 +529,18 @@ class _EntryBlock:
         for (function_index, members, _, columns), swept, parts in zip(self.groups, self.swept, self.readers):
             arguments, lead = self._inputs(parameters, members, swept)
             width = columns.size if derivatives else 0
+            native = _native_entries(function_index, arguments, lead, swept, columns[:width], parts) if NATIVE_ENTRIES else None
+            if native is not None:  # the formulas and their derivatives from the native kernel
+                values, tangents, flags = native
+                slopes = []
+                for slot, (o, readers, call, _, _) in enumerate(parts):
+                    entries[readers if rows is None else rows[readers]] = values[slot][call]
+                    if not flags[o] & 1:  # no derivative
+                        slopes.append(None)
+                    else:  # one column when the derivative is the same in every row, as in the NumPy path
+                        slopes.append(tangents[slot] if flags[o] & 4 else tangents[slot][:, :, :1])
+                tape.append(slopes if width else None)
+                continue
             for position, j in enumerate(columns[:width]):  # only these inputs carry a derivative
                 seed = np.zeros((width, 1, 1))
                 seed[position] = 1.0

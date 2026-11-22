@@ -10,3 +10,6 @@ benchmark*.pdf
 benchmark*.svg
 *.npz
 examples/results/
+
+# built from entries.cpp by differometor/_native/build_entries.sh (experiment, not shipped)
+differometor/_native/libentries.so
