@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 11:12, nach Runde 38 (Prüfung auf Noels Frage: bleibt das Kompilieren bei 0 ms, wenn das Setup wechselt?). **Ja auf `origin/max/next`; auf `main` nicht bei Setups mit zwei Detektor-Ports (Balanced Homodyne)**, siehe unten. Feature-Freeze seit 10:00, nichts gebaut. `main` `a2799ba`, `max/next` `67f0055`, offene Patches: `lazy-late`, `heap` (zwei Fassungen), `dockerfile`.
+Stand: So 22.11.2026, 11:15, nach Runde 39 (Abgleich im Feature-Freeze). **Neu: Philip arbeitet auf `max/next` weiter (zwei neue Branches) und nennt dafür die erste Xeon-Zahl: `benchmark.py` 215,1 ms im Erstlauf** (zuletzt 236 ms für `be2eb21`). `main` steht weiter auf `a2799ba`; `max/next` (`67f0055`) mit Carrier- und `lazy-late`-Commit ist dort nicht gelandet. Runde 38: Kompilieren bleibt bei Setup-Wechsel auf 0 ms, auf `main` aber nicht bei zwei Detektor-Ports. Offene Patches: `heap` (zwei Fassungen, kein Xeon-Wert), `dockerfile`.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -159,6 +159,20 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 39 (22.11., 11:13 bis 11:15): Abgleich im Feature-Freeze, nichts gebaut.**
+
+- *Stand der Branches um 11:13:* `main` `a2799ba` und `max/next` `67f0055` unverändert. **Zwei neue Branches von Philip, beide auf `max/next` aufgesetzt** (enthalten also Carrier-Commit, `lazy-late`, Max' Interpreter-Ergänzung und seine Start-Massnahmen):
+
+| Branch | Commit | Inhalt |
+| --- | --- | --- |
+| `origin/philip-native-benchmark` | `3278a81` (10:24) | `benchmark_native.py`: derselbe Arbeitsablauf wie `benchmark.py`, aber der Host-Weg wird direkt gerufen, ohne Tracing und ohne `import jax`. Nicht gewertet, `benchmark.py` bleibt unberührt. Ausgaben bitgleich, Gradient auf 3e-14 |
+| `origin/philip-port-c` | `18f8ed4` (11:02) | Versuch, standardmässig aus (`DIFFEROMETOR_NATIVE_ENTRIES=1`): Bauteil-Formeln mit Ableitungen in C++ (`_native/entries.cpp`). Korrekt (787 Zufallsauswertungen, grösste Abweichung 4e-16), aber **langsamer**: Einträge des Gitters 4,1 ms mit NumPy gegen 17,0 ms mit dem Kern |
+
+- **Erste Xeon-Zahlen für den Stand auf `max/next`** (aus Philips Commit `18f8ed4`, Xeon Platinum 8468, `--cpus 1`, sechs Runden im Wechsel, Erstlauf, nicht von mir gemessen): `benchmark.py` **215,1 ms** mit den NumPy-Formeln (230,4 ms mit dem C++-Kern), `benchmark_native.py` 89,7 ms. Gegenüber 236 ms für `be2eb21` sind das rund 21 ms weniger; darin stecken Max' Start-Massnahmen, der Carrier-Commit und `lazy-late`. Eine Aufteilung auf die einzelnen Commits gibt es nicht.
+- Dazu passt meine Schätzung aus Runde 27, dass die Einträge mit Ableitungen auf dem Xeon rund 4 ms kosten (Philip misst 4,1 ms).
+- Offene Patches: `lazy-late` und `dockerfile` passen auf `main`. `max-next-heap` passt auf `max/next` und auf beide neuen Branches von Philip (dort ist `_startup.py` samt Bytecode identisch). Für den Heap-Patch gibt es weiter keine Xeon-Messung.
+- `main` enthält `max/next` nicht. Was abgegeben wird, entscheiden Philip, Max und Noel. Akku 42 %.
 
 **Runde 38 (22.11., 11:08 bis 11:12): Bleibt das Kompilieren bei 0 ms, wenn das Setup wechselt?** Noels Frage um 11:07: Hält die 0 nur, weil dasselbe Setup wiederholt wird und ein Cache greift, oder auch, wenn zwischen den Läufen das Setup wechselt und jeder Lauf kalt ist?
 
