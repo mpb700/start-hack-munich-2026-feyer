@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 09:16, nach Runde 34 (letzte Runde vor dem Feature-Freeze um 10:00, nichts gebaut); davor Runde 32 (nur Abgleich: Max hat Carrier-Commit und den Patch `lazy-late` in `origin/max/next` übernommen, siehe unten). **Die Schleife läuft seit 05:16 wieder, jetzt stündlich** (Noel: «Iterier jede Stunde drüber»; davor um 04:10 beendet, Auftrag `01bbf197` gelöscht). Ab So 10:00 gilt der Feature-Freeze. `main` steht auf `a2799ba` (Code wie `73d2075`, mit Carrier-Patch). **Offen als Patch auf `noel`: `patches/philip-fastest-lazy-late.patch`** (auf Noels Ja gebaut, nicht auf `main`). Vorschlag C (Heap) liegt nur im Scratchpad, Vorschlag A baut Max auf `origin/max/next`. Xeon-Messungen für `73d2075` und den neuen Patch fehlen.
+Stand: So 22.11.2026, 09:45, nach Runde 35. **`origin/max/next` (`67f0055`) unabhängig auf x86 mit C-Kern geprüft: beide Benchmarks `PASS`, Arrays bitgleich zu `main`, zehn Setup-Varianten `PASS`, in den Minima klar schneller.** `main` steht weiter auf `a2799ba` (mit Carrier-Patch); `max/next` enthält dazu meinen Patch `lazy-late`. Vorschlag C (Heap) ist auf `max/next` nachgemessen, aber weiter nicht gebaut (braucht Noels Ja und eine Xeon-Messung). Ab 10:00 Feature-Freeze.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -158,6 +158,28 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 35 (22.11., 09:17 bis 09:45): `max/next` auf x86 geprüft, Heap darauf nachgemessen.** Noel um 09:17: «Los, geh nochmals voll rein».
+
+*Eigener Code.* Build-Schritt profiliert (3,39 ms auf dem M4): `build()` selbst 1,1 ms, 2'484 `np.array`-Aufrufe 0,9 ms, `_sideband_layout` 0,8 ms, `pairs_to_arrays` 0,5 ms, `set_instructions` 0,35 ms (Profil, also überhöht). Kein einzelner Posten, der sich bis zum Freeze sicher umbauen und über 27 Setups prüfen liesse. Nichts geändert.
+
+*`origin/max/next` (`67f0055`) gegen `main` (`a2799ba`), unabhängige Prüfung.* Max hatte nur auf arm64 gemessen. Images mit Bytecode aus beiden Ständen, der Mac war während der Messung in Benutzung, darum zählen die Minima.
+
+| Messung | `main` | `max/next` |
+| --- | --- | --- |
+| x86-64 emuliert mit C-Kern, Gitter, 8 Läufe, Minimum (Median) | 461,9 (487,2) ms | **416,9** (606,0) ms |
+| x86-64 emuliert, aLIGO, 8 Läufe, Minimum (Median) | 457,5 (507,1) ms | **423,1** (434,3) ms |
+| arm64-Linux, Gitter, 12 Läufe, Minimum (Median) | 176,1 (196,5) ms | **166,3** (174,9) ms |
+| arm64-Linux, aLIGO, 12 Läufe, Minimum (Median) | 152,8 (163,1) ms | **127,7** (142,6) ms |
+| Homodyne-Variante, x86 emuliert, Erstlauf (3 Läufe) | 1'054 bis 1'078 ms | **527 bis 587 ms** |
+| Variante `random-5`, x86 emuliert (3 Läufe) | 514 bis 532 ms | 507 bis 511 ms |
+
+- Korrektheit auf x86 mit C-Kern: `benchmark.py` und `benchmark_aligo.py` `PASS`, **alle Arrays bitgleich zu `main`** (auch auf dem Mac). Zehn Setup-Varianten (`homodyne`, `swapped-0/1`, `perturbed-2`, `random-0/2/3/5/6/7`) `PASS` mit denselben Fehlern wie auf `main`.
+- Prüfskripte: auf dem Mac alle 22 grün (13 von Philip und `flags`, 7 von Max inklusive `test_threads`, `test_lazy_stdlib`, `test_package_import`, dazu `test_carrier` und `test_lazy_late`). Im x86-Image 19 von 22 grün, die drei langsamen (`test_homodyne`, `check_setups`, `test_genauigkeit`) liefen beim Schreiben noch.
+- Alle 16 mitgelieferten `.pyc` von `max/next` sind gültig (Python 3.12.15).
+- Nicht geprüft: der Xeon. Ob `max/next` auf `main` kommt, entscheiden Max, Philip und Noel.
+
+*Vorschlag C (Heap in grossen Schritten) auf `max/next`, nur Messung.* Im Scratchpad auf `67f0055` aufgesetzt (Diff: `r34/heap-on-max-next.diff`), arm64-Linux, 12 Läufe im Wechsel, Minimum (Median): Gitter `max/next` 166,3 (174,9) → **153,4 (164,7) ms**, ohne Huge Pages 155,4 (161,7) ms; Forward 30,7 → 25,2 ms. aLIGO ohne Gewinn (127,7 → 129,3 ms, kleine Felder). Weiter nicht gebaut: Regelfrage B6, Xeon-Messung nötig, und ab 10:00 gilt der Freeze.
 
 **Runde 34 (22.11., 09:14 bis 09:16): Abgleich, nichts gebaut.** `main` unverändert `a2799ba`. `origin/max/next` neu auf `67f0055` (Commit von 06:54, erst jetzt gepusht): «the first use of a put-off module is safe from several threads», eine Absicherung in Max' `_startup.py`, kein neuer Hebel. Alle anderen Branches unverändert. Kein neuer Hebel im eigenen Code. Ab 10:00 gilt der Feature-Freeze: Die Schleife prüft danach nur noch den Stand. Akku 83 %.
 
@@ -1118,6 +1140,7 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.
 - Discord (Noel am 21.11. gegen 14:35): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:13: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
 - Noel am 21.11. um 20:54: caffeinate wieder starten, Schleife alle 30 Minuten (:13 und :43).
+- Noel am 22.11. um 09:17: «Los, geh nochmals voll rein». Verstanden als Auftrag für eine volle Runde innerhalb der bisherigen Regeln, nicht als Ja zu Vorschlag C oder zu einem Push auf `main`.
 - Noel am 22.11. um 05:15: «Iterier jede Stunde drüber». Neue stündliche Schleife (Minute :07), `caffeinate` läuft wieder. Regeln wie bisher, Basis ist `origin/main`.
 - Noel am 22.11. um 04:10: «Hör danach auf mit der Schleife, es reicht». Auftrag `01bbf197` gelöscht, keine weiteren Runden.
 - Noel am 22.11. um 04:00: «Ja, B als Patch» (ein JAX-Modul bleibt lazy). Freigabe für den Patch auf `noel`, nicht für `main`.
