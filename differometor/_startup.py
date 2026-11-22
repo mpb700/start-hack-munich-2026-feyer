@@ -156,6 +156,28 @@ LAZY_JITS = True
 # timer. The timed imports then find all modules in `sys.modules`. Same work, not measured.
 PREIMPORT = False
 
+# early, kind (A): how the C library gets memory from the kernel (glibc; skipped anywhere else).
+# By default glibc's malloc asks the kernel for every block above 128 kB separately (mmap) and
+# hands it back when it is freed, and it grows its heap in steps of 128 kB. A run like this
+# allocates and frees arrays of a few hundred kB to a few MB all the time (NumPy temporaries,
+# the files Python reads). Each of them is new memory to the kernel: it clears every 4 kB page
+# and maps it at the first touch (a page fault), about 20 000 times in one benchmark run.
+# With this switch
+#   * blocks up to HEAP_BLOCK_LIMIT come from the heap, where a freed block is reused as it is,
+#   * the heap grows by HEAP_STEP of address space at a time and is never trimmed. Address space
+#     costs nothing until it is touched. A heap that is mapped in large steps is also what the
+#     kernel needs to back it with 2 MB pages where transparent huge pages are on ("always").
+# Nothing is computed differently: the same memory is requested and freed in the same order.
+HEAP_IN_LARGE_STEPS = True
+HEAP_STEP = 256 << 20
+HEAP_BLOCK_LIMIT = 32 << 20  # the largest value glibc accepts for M_MMAP_THRESHOLD on 64 bit
+
+# The same, plus the advice to the kernel that the heap may use 2 MB pages (MADV_HUGEPAGE). It
+# matters where transparent huge pages are set to "madvise" (the default of Ubuntu); with
+# "always" the kernel does it unasked, with "never" not at all. Only read when
+# HEAP_IN_LARGE_STEPS is on.
+HEAP_HUGE_PAGES = True
+
 # late, kind (A): what the collector does after `differometor` has been imported.
 #   "default"  leave it alone
 #   "relaxed"  freeze everything that exists now and raise the thresholds (GC_RELAXED_THRESHOLDS):
@@ -247,11 +269,56 @@ def _early_options():
                 ("npdocs", DEFER_NUMPY_DOCS),
                 ("hlo", DEFER_HLO_DIALECTS),
                 ("preimport", PREIMPORT),
+                ("heap", HEAP_IN_LARGE_STEPS),
+                ("hugepages", HEAP_IN_LARGE_STEPS and HEAP_HUGE_PAGES),
             )
             if on
         }
     return {part.strip().lower() for part in value.split(",")} & {
-        "gc", "lazy", "defer", "dataclass", "jits", "report", "tpuprobe", "npdocs", "hlo", "preimport"}
+        "gc", "lazy", "defer", "dataclass", "jits", "report", "tpuprobe", "npdocs", "hlo", "preimport", "heap", "hugepages"}
+
+
+# --------------------------------------------------------------------------------------------
+# Heap in large steps
+# --------------------------------------------------------------------------------------------
+
+
+def _heap_in_large_steps(huge_pages):
+    """Apply HEAP_IN_LARGE_STEPS (and HEAP_HUGE_PAGES). Returns what happened, for `state()`."""
+    import ctypes
+
+    libc = ctypes.CDLL(None)
+    mallopt = libc.mallopt  # glibc; an AttributeError anywhere else ends this measure
+    trim_threshold, top_pad, mmap_threshold = -1, -2, -3  # M_TRIM_THRESHOLD, M_TOP_PAD, M_MMAP_THRESHOLD
+    accepted = [mallopt(mmap_threshold, HEAP_BLOCK_LIMIT), mallopt(trim_threshold, 2 * HEAP_STEP), mallopt(top_pad, HEAP_STEP)]
+    if not all(accepted):
+        return f"mallopt accepted {accepted}"
+    if not huge_pages:
+        return "large steps"
+    # One step now, so that there is a mapped range to give the advice for. The heap keeps the
+    # advice for as long as it grows inside this range.
+    address, size = ctypes.c_void_p, ctypes.c_size_t
+    libc.sbrk.restype, libc.sbrk.argtypes = address, [ctypes.c_ssize_t]
+    libc.malloc.restype, libc.malloc.argtypes = address, [size]
+    libc.free.restype, libc.free.argtypes = None, [address]
+    libc.madvise.restype, libc.madvise.argtypes = ctypes.c_int, [address, size, ctypes.c_int]
+    low = libc.sbrk(0)
+    libc.free(libc.malloc(4 << 20))
+    high = libc.sbrk(0)
+    huge = 2 << 20
+    start = ((low or 0) + huge - 1) & ~(huge - 1)
+    if not low or not high or high <= start or high - low > 2 * HEAP_STEP:
+        return "large steps, no range for the huge page advice"
+    advised = libc.madvise(start, high - start, 14) == 0  # MADV_HUGEPAGE
+    return "large steps, huge pages advised" if advised else "large steps, huge page advice refused"
+
+
+def _apply_heap(info, options):
+    if "heap" in options and "heap" not in info:
+        try:
+            info["heap"] = _heap_in_large_steps("hugepages" in options)
+        except Exception as error:  # not glibc, or no ctypes: never stand in the way of the process
+            info["heap"] = f"off: {type(error).__name__}: {error}"
 
 
 # --------------------------------------------------------------------------------------------
@@ -1325,6 +1392,7 @@ def early(carrier="pth"):
     if getattr(sys, _STATE_ATTRIBUTE, None) is not None:
         return state()
     info = {"carrier": carrier, "early": []}
+    _apply_heap(info, _early_options())
     setattr(sys, _STATE_ATTRIBUTE, info)
     options = _early_options()
     if "dataclass" in options:
@@ -1372,6 +1440,7 @@ def late():
         setattr(sys, _STATE_ATTRIBUTE, info)
     if "late" in info:
         return info
+    _apply_heap(info, _early_options())  # without a carrier this is the first chance
     mode = os.environ.get("DIFFEROMETOR_GC", GC_RUN).strip().lower()
     info["late"] = mode
     if mode not in ("relaxed", "off") or not gc.isenabled():
