@@ -42,10 +42,15 @@ Start-up measures of this script (all inside the timed window, none moves work i
        (for ``numpy.matrix ** n`` and for ``numpy.roots`` / ``numpy.polyfit``) and calls none of
        them; this run uses nothing of the package. The four names are handed out as functions
        that load the package when they are called.
+    5. The C library's heap grows in large steps and keeps its blocks (glibc ``mallopt``, plus
+       the advice that the heap may use 2 MB pages). The same memory is requested and freed in
+       the same order; the kernel just maps it far less often. This is the package's own
+       measure (``differometor/_startup.py``: HEAP_IN_LARGE_STEPS, HEAP_HUGE_PAGES), called
+       here directly. Skipped where the C library is not glibc.
     Measures 1 to 3 are part of the package's start-up code for the scored benchmark as well
     (``differometor/_startup.py``: GC_PAUSE_JAX_IMPORT / GC_RUN, DEFER_NUMPY_DOCS,
     DEFER_UNUSED_MODULES); they are repeated here in plain form because that code is built
-    around ``import jax``. ``--plain`` switches all four off.
+    around ``import jax``. ``--plain`` switches all five off.
 
 Only setups that the sparse host path covers (``differometor.fast.supports``) can run here.
 """
@@ -121,6 +126,27 @@ if OPTIONS["cpus"] is not None:
 
 import json
 import types
+
+
+def _heap_in_large_steps():
+    """Measure 5, with the package's own function. Returns what happened (for the report)."""
+    try:
+        from importlib.machinery import SourceFileLoader
+
+        # differometor/_startup.py is standalone (standard library only). It is loaded under the
+        # name its carriers use, so that the package takes this copy instead of running the file again.
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "differometor", "_startup.py")
+        module = types.ModuleType("_differometor_startup")
+        module.__file__ = path
+        sys.modules[module.__name__] = module
+        SourceFileLoader(module.__name__, path).exec_module(module)
+        return module._heap_in_large_steps(True)
+    except BaseException as error:  # not glibc, or a package without this measure: nothing changes
+        sys.modules.pop("_differometor_startup", None)
+        return f"off: {type(error).__name__}: {error}"
+
+
+HEAP = "off (--plain)" if PLAIN else _heap_in_large_steps()
 
 _NUMPY_DOC_MODULES = ("numpy._core._add_newdocs", "numpy._core._add_newdocs_scalars")
 if not PLAIN:
@@ -516,7 +542,7 @@ def main():
             "python": platform.python_version(),
             "numpy": np.__version__,
             "jax_imported": False,
-            "startup_measures": [] if PLAIN else ["gc paused during imports, relaxed afterwards", "numpy docstring modules after the timed phases", "numpy.ma.is_masked answered for plain arrays", "numpy.linalg on first use"],
+            "startup_measures": [] if PLAIN else ["gc paused during imports, relaxed afterwards", "numpy docstring modules after the timed phases", "numpy.ma.is_masked answered for plain arrays", "numpy.linalg on first use", "heap: " + HEAP],
             "numpy_ma_loaded_in_first_run": masked_arrays_loaded,
             "numpy_linalg_loaded_in_first_run": linalg_loaded,
             "native_lu": bool(fast.NATIVE_LU and fast._pattern_lu() is not None),
