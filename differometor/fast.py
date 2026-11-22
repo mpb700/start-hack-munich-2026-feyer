@@ -266,7 +266,7 @@ def _chain(slope, tan):
     return np.where(tan == 0, 0.0, product)
 
 
-def _unary(function, derivative, singular=False):
+def _unary(function, derivative, singular=False, domain=None):
     def wrapped(x):
         if not isinstance(x, Dual):
             return function(x)
@@ -275,11 +275,27 @@ def _unary(function, derivative, singular=False):
 
     def wrapped_singular(x):
         if not isinstance(x, Dual):
-            return function(x)
-        y = function(x.val)
-        return Dual(y, _chain(derivative(x.val, y), x.tan))
+            return function(_complex_outside(x, *domain))
+        value = _complex_outside(x.val, *domain)
+        y = function(value)
+        return Dual(y, _chain(derivative(value, y), x.tan))
 
     return wrapped_singular if singular else wrapped
+
+
+def _complex_outside(x, lower, upper):
+    """A real `x` with a value outside [lower, upper] (no upper bound: None) as a complex array, anything else unchanged.
+
+    The component functions get real numbers here, in the JAX path they get complex ones. For a
+    real argument outside its domain NumPy's sqrt and arcsin return nan (a beamsplitter beyond the
+    critical angle: n_left / n_right * sin(alpha) > 1, total internal reflection), JAX's complex
+    functions return the value on the branch cut. With a zero imaginary part of either sign JAX
+    takes the branch NumPy takes for +0, so `x + 0j` gives the same values and derivatives
+    (`runs/philip/test_tir.py`).
+    """
+    if np.isrealobj(x) and (np.min(x) < lower or (upper is not None and np.max(x) > upper)):
+        return np.asarray(x, dtype=complex)
+    return x
 
 
 class _NumpyShim:
@@ -288,12 +304,12 @@ class _NumpyShim:
     pi, e, complex128, ndarray = np.pi, np.e, np.complex128, np.ndarray
     log10, log = staticmethod(np.log10), staticmethod(np.log)
     exp = staticmethod(_unary(np.exp, lambda x, y: y))
-    sqrt = staticmethod(_unary(np.sqrt, lambda x, y: 0.5 / y, singular=True))
+    sqrt = staticmethod(_unary(np.sqrt, lambda x, y: 0.5 / y, singular=True, domain=(0.0, None)))
     sin = staticmethod(_unary(np.sin, lambda x, y: np.cos(x)))
     cos = staticmethod(_unary(np.cos, lambda x, y: -np.sin(x)))
     sinh = staticmethod(_unary(np.sinh, lambda x, y: np.cosh(x)))
     cosh = staticmethod(_unary(np.cosh, lambda x, y: np.sinh(x)))
-    arcsin = staticmethod(_unary(np.arcsin, lambda x, y: 1.0 / np.sqrt(1.0 - x * x), singular=True))
+    arcsin = staticmethod(_unary(np.arcsin, lambda x, y: 1.0 / np.sqrt(1.0 - x * x), singular=True, domain=(-1.0, 1.0)))
     radians = staticmethod(_unary(np.radians, lambda x, y: np.pi / 180.0))
 
     @staticmethod
