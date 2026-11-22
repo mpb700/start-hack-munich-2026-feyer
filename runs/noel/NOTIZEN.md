@@ -167,7 +167,7 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
   - `git show origin/noel:runs/noel/patches/philip-fastest-heap.patch | git am` auf `main` `a2799ba`, **nach** `philip-fastest-lazy-late.patch` (lokal `ef9a120`).
   - Beide bringen den Bytecode von `_startup.py` mit, alle 16 `.pyc` gültig.
 - Abschalten ohne Code-Änderung: `DIFFEROMETOR_STARTUP` ohne `heap` (bzw. ohne `hugepages`). So lässt sich die Wirkung auf dem Xeon im selben Checkout im Wechsel messen.
-- Geprüft, Fassung für `max/next`: beide Benchmarks `PASS`, **alle Arrays bitgleich zu `max/next`** (Mac und x86-Image mit C-Kern). Mac: alle 23 Prüfskripte grün (22 wie in Runde 35, dazu neu `runs/noel/test_heap.py`). x86-Image: 20 von 23 grün beim Schreiben, die langsamen liefen noch.
+- Geprüft, Fassung für `max/next`: beide Benchmarks `PASS`, **alle Arrays bitgleich zu `max/next`** (Mac und x86-Image mit C-Kern). Mac: alle 23 Prüfskripte grün (22 wie in Runde 35, dazu neu `runs/noel/test_heap.py`). x86-Image mit C-Kern: alle 23 grün (Nachtrag 09:57, der Lauf war beim ersten Eintrag noch nicht fertig).
 - Geprüft, Fassung für `main`: derselbe Stand wie die in Runde 27 gemessene Versuchskopie (Dateien per Prüfsumme gleich), beide Benchmarks `PASS` auf dem Mac, `test_heap.py` auf Mac und arm64-Linux grün.
 - `test_heap.py`: Meldung der Massnahme, Wiederverwendung eines 8-MB-Blocks, Abschalten über `DIFFEROMETOR_STARTUP`, Lauf ohne Träger, gleiche Rechenergebnisse.
 - x86 emuliert, 8 Läufe im Wechsel, während die Prüfskripte parallel liefen (darum sehr unruhig), Minimum (Median): Gitter 550,5 (629,6) → 542,4 (594,8) ms, Forward 43,9 (53,5) → 34,0 (43,8) ms; aLIGO 537,9 (603,7) → 566,0 (584,0) ms, also in der Streuung.
