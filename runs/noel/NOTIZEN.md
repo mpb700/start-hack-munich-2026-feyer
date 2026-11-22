@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 03:45, nach Runde 27. **Neu: `patches/philip-fastest-carrier.patch` (Carrier-System über den C-Kern, SuperLU wird auf x86 nicht mehr geladen), geprüft, noch nicht auf `main`.** Dazu drei gemessene Vorschläge, die Noels Ja brauchen und nur im Scratchpad liegen (siehe «Runde 27»). `main` steht unverändert auf `e770ba2` (Code wie `be2eb21`, Xeon laut Philip: Gitter 236 ms, aLIGO 210 ms).
+Stand: So 22.11.2026, 03:50, nach Runde 28 (nur Abgleich: Max baut Vorschlag A selbst auf `origin/max/next`, siehe unten). **Neu: `patches/philip-fastest-carrier.patch` (Carrier-System über den C-Kern, SuperLU wird auf x86 nicht mehr geladen), geprüft, noch nicht auf `main`.** Dazu drei gemessene Vorschläge, die Noels Ja brauchen und nur im Scratchpad liegen (siehe «Runde 27»). `main` steht unverändert auf `e770ba2` (Code wie `be2eb21`, Xeon laut Philip: Gitter 236 ms, aLIGO 210 ms).
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -157,6 +157,15 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 28 (22.11., 03:44 bis 03:50): Abgleich, nichts Neues gebaut.**
+
+- *Stand der Branches um 03:44:* `main` unverändert `e770ba2`, `philip-fastest` `3c0828f`, `philip`, `Joel`, `sx*`, `max/links`, `max/interpreter`, `max/tpu-probe` unverändert. **Neu: `origin/max/next`** (drei Commits von 03:36 auf `e770ba2`): `2155055` billigere TPU-Suche beim Import (`FAST_TPU_PROBE`), `5a37c22` NumPy-Docstrings und die zwei HLO-Dialekt-Module erst bei Bedarf (`_startup.py`, +398 Zeilen, mit `runs/max/test_hlo_later.py` und `test_numpy_docs.py`), `8fb61ed` Interpreter mit `pad`, `add_any`, `sign`, `rev`, `clamp` und reellen Winkelfunktionen. Max misst in Docker arm64 z. B. Voyager mit zwei Ports 307,1 → 287,8 ms, auf x86 hat er nicht gemessen.
+- **Vorschlag A aus Runde 27 ist damit zurückgezogen:** Max hat dieselbe Lücke (Gradient-Programm bei zwei Detektor-Ports) selbst geschlossen und deckt mehr ab. Sein `8fb61ed` geht vor, mein Patch dazu bleibt ungenutzt im Scratchpad. Meine Messung der Lücke (Homodyne-Variante, arm64-Linux: 159,2 → 147,4 ms; emuliert x86 rund 450 ms) bestätigt seinen Befund unabhängig.
+- Vorschlag B (`multihost_utils` bleibt lazy) und C (Heap in grossen Schritten) berühren ebenfalls `_startup.py`. Sie überschneiden sich inhaltlich nicht mit `max/next`, die Patches müssten aber nach dessen Übernahme neu aufgesetzt werden. Beide warten weiter auf Noels Ja.
+- Nachtrag zu Runde 27: Der Versuchsstand mit allen drei Vorschlägen hat im emulierten x86-Image alle 16 Prüfskripte bestanden (15 von Philip und Max, dazu `test_carrier.py`).
+- Der Carrier-Patch (`patches/philip-fastest-carrier.patch`) berührt nur `fast.py` und passt unverändert auf `main` und auf `max/next` (dort ändert niemand `fast.py`).
+- Kein weiterer Hebel im eigenen Code mit messbarem Gewinn: Was bleibt (Pläne pro Aufruf, Pivot-Suche im C-Kern, Rausch-Summen), liegt je unter 0,5 bis 1 ms und damit unter der Streuung des Wechselvergleichs.
 
 **Runde 27 (22.11., 02:49 bis 03:45): Carrier-Patch, drei Vorschläge mit Zahlen.** Noel um 02:40: «kannst du noch was weiter verbesser». Basis `main` `e770ba2`, andere Branches um 03:29 unverändert.
 
