@@ -4,7 +4,9 @@ Fast host-side simulation path: sparse LU solves with SuperLU and a hand-written
 `differometor.simulate.simulate` dispatches here for setups with exactly one quantum noise
 detector (a `qnoised` or a balanced homodyne detector `qhd`) and a single carrier operating
 point. Parameter links are covered for the linking functions listed in `LINK_RULES` (`jnp.sqrt`,
-which is what amplitude modulation uses). Everything else uses the original JAX implementation.
+which is what amplitude modulation uses, and the other elementary functions of `jax.numpy`) and
+for links written as a plain formula (`_formula_rule`). Everything else uses the original JAX
+implementation.
 A balanced homodyne detector reads two ports, the second one with a phase factor from its
 `phase` parameter (`EntryPlan.selection`); the phase may be a design variable.
 
@@ -302,7 +304,15 @@ class _NumpyShim:
     """Stand-in for `jax.numpy` inside the component functions (all inputs are real)."""
 
     pi, e, complex128, ndarray = np.pi, np.e, np.complex128, np.ndarray
-    log10, log = staticmethod(np.log10), staticmethod(np.log)
+    log = staticmethod(_unary(np.log, lambda x, y: 1.0 / x))
+    log10 = staticmethod(_unary(np.log10, lambda x, y: 1.0 / (x * np.log(10.0))))
+    tan = staticmethod(_unary(np.tan, lambda x, y: 1.0 + y * y))
+    tanh = staticmethod(_unary(np.tanh, lambda x, y: 1.0 - y * y))
+    arctan = staticmethod(_unary(np.arctan, lambda x, y: 1.0 / (1.0 + x * x)))
+    square = staticmethod(_unary(np.square, lambda x, y: 2.0 * x))
+    negative = staticmethod(_unary(np.negative, lambda x, y: -1.0))
+    reciprocal = staticmethod(_unary(np.reciprocal, lambda x, y: -(y * y)))
+    degrees = staticmethod(_unary(np.degrees, lambda x, y: 180.0 / np.pi))
     exp = staticmethod(_unary(np.exp, lambda x, y: y))
     sqrt = staticmethod(_unary(np.sqrt, lambda x, y: 0.5 / y, singular=True, domain=(0.0, None)))
     sin = staticmethod(_unary(np.sin, lambda x, y: np.cos(x)))
@@ -508,16 +518,80 @@ class _EntryBlock:
 
 # Linking functions (derived parameters, e.g. a signal amplitude that follows `sqrt(laser power)`)
 # that the fast path evaluates on the host: the NumPy value and the derivative as a function of
-# input and value. Setups with any other linking function use the original JAX implementation.
-LINK_RULES = ((jnp.sqrt, np.sqrt, lambda x, y: 0.5 / y),)
+# input and value. A link that is neither one of these functions nor a plain formula
+# (`_formula_rule`) sends the setup to the original JAX implementation.
+LINK_RULES = (
+    (jnp.sqrt, np.sqrt, lambda x, y: 0.5 / y),
+    (jnp.square, np.square, lambda x, y: 2.0 * x),
+    (jnp.exp, np.exp, lambda x, y: y),
+    (jnp.log, np.log, lambda x, y: 1.0 / x),
+    (jnp.log10, np.log10, lambda x, y: 1.0 / (x * np.log(10.0))),
+    (jnp.sin, np.sin, lambda x, y: np.cos(x)),
+    (jnp.cos, np.cos, lambda x, y: -np.sin(x)),
+    (jnp.tan, np.tan, lambda x, y: 1.0 + y * y),
+    (jnp.tanh, np.tanh, lambda x, y: 1.0 - y * y),
+    (jnp.arctan, np.arctan, lambda x, y: 1.0 / (1.0 + x * x)),
+    (jnp.negative, np.negative, lambda x, y: -1.0),
+    (jnp.reciprocal, np.reciprocal, lambda x, y: -(y * y)),
+    (jnp.abs, np.abs, lambda x, y: np.sign(x)),
+    (jnp.radians, np.radians, lambda x, y: np.pi / 180.0),
+    (jnp.degrees, np.degrees, lambda x, y: 180.0 / np.pi),
+)
+
+# Operations a formula may consist of besides loading names and calling functions: anything that
+# compares, branches or loops is left to JAX (a dual number has no order and no truth value).
+_FORMULA_FORBIDDEN = ("COMPARE_OP", "IS_OP", "CONTAINS_OP", "POP_JUMP", "JUMP_IF", "FOR_ITER", "GET_ITER", "TO_BOOL", "SEND", "YIELD")
+_formula_rules = {}  # id(function) -> (function, rule or None): every formula is prepared once
+
+
+def _formula_rule(function):
+    """
+    (value, derivative) for a linking function that is a plain Python formula: a `lambda` or
+    `def` without branches whose JAX use goes through `jax.numpy` under a global name, as in
+    `lambda power: jnp.sqrt(power) / 2`. A copy of the function with that name bound to the
+    NumPy shim of the component functions is evaluated on a dual number, which gives the value
+    and the derivative together; no derivative is written by hand.
+
+    None when the function is no such formula or its copy cannot be evaluated (a function the
+    shim lacks, a comparison, a helper that needs real JAX values). The setup then uses the
+    original JAX implementation, as before.
+    """
+    known = _formula_rules.get(id(function))
+    if known is not None and known[0] is function:
+        return known[1]
+    rule = None
+    try:
+        import dis
+        import types
+
+        if isinstance(function, types.FunctionType) and not any(
+            instruction.opname.startswith(_FORMULA_FORBIDDEN) for instruction in dis.get_instructions(function.__code__)
+        ):
+            namespace = {name: (_NumpyShim if value is jnp else value) for name, value in function.__globals__.items()}
+            formula = types.FunctionType(function.__code__, namespace, function.__name__, function.__defaults__, function.__closure__)
+
+            def evaluate(x):
+                out = formula(Dual(np.float64(x), np.float64(1.0)))
+                value, slope = (out.val, out.tan) if isinstance(out, Dual) else (out, 0.0)
+                if np.ndim(value) or np.ndim(slope) or np.iscomplexobj(value) or np.iscomplexobj(slope):
+                    raise TypeError("a link has to map a real number to a real number")
+                return np.float64(value), np.float64(slope)
+
+            with np.errstate(all="ignore"):
+                evaluate(0.75)  # raises for everything the shim and the dual numbers do not cover
+            rule = (lambda x: evaluate(x)[0], lambda x, y: evaluate(x)[1])
+    except Exception:
+        rule = None
+    _formula_rules[id(function)] = (function, rule)
+    return rule
 
 
 def _link_rule(function):
-    """(value, derivative) for a linking function of `LINK_RULES`, None for any other function."""
+    """(value, derivative) for a linking function the fast path covers, None for any other function."""
     for known, value, derivative in LINK_RULES:
         if function is known:
             return value, derivative
-    return None
+    return _formula_rule(function)
 
 
 class EntryPlan:
@@ -1611,7 +1685,7 @@ HOST_KEYS = (
 
 
 def _links_supported(arrays):
-    """Parameter links are covered when their functions are known at trace time and in `LINK_RULES`."""
+    """Parameter links are covered when their functions are known at trace time and `_link_rule` has a rule for each."""
     if arrays["linked_indices"].shape[0] == 0:
         return True
     indices = arrays["linking_function_indices"]
@@ -1627,7 +1701,7 @@ def supports(arrays):
     Static check (shapes, dtypes and the linking functions) whether the fast path covers these
     `simulate` arguments: exactly one quantum noise detector (a `qnoised` or a balanced homodyne
     detector `qhd`), a single carrier operating point, real design variables and only parameter
-    links whose functions are in `LINK_RULES`.
+    links whose functions are in `LINK_RULES` or plain formulas (`_formula_rule`).
     """
     optimized = arrays["optimized_parameters"]
     return (
