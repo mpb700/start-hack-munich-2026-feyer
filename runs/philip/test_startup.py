@@ -268,5 +268,20 @@ finally:
     sys.path.remove(str(archive))
 
 
+# ---- prefetch table ------------------------------------------------------------------------------
+import marshal  # noqa: E402
+
+table = marshal.loads((root / "differometor" / "_prefetch.bin").read_bytes())
+check("the prefetch table lists files of installed packages with size and byte ranges", len(table) > 100
+      and all(type(relative) is str and not relative.startswith(("/", "..")) and type(size) is int and ranges
+              and all(0 <= offset and 0 < length and offset + length <= size for offset, length in ranges) for relative, size, ranges in table)
+      and table[0][0] == "jaxlib/libjax_common.so", str(table[0][:2]))
+note = state.get("prefetch") or {}
+expected = ("requested", "warm cache, nothing requested") if hasattr(os, "posix_fadvise") else ("off: no posix_fadvise on this platform",)
+check("the prefetch ran or said why not, without an error", "prefetch" in state.get("early", []) and note.get("state") in expected, str(note))
+switched_off = subprocess.run([sys.executable, "-c", "import os, sys; sys.path.insert(0, os.getcwd()); import argparse; print(sys._differometor_startup.get('prefetch'))"],
+                              cwd=root, env=dict(os.environ, DIFFEROMETOR_STARTUP="gc,lazy,defer,dataclass,jits,report"), capture_output=True, text=True)
+check("without `prefetch` in DIFFEROMETOR_STARTUP nothing is requested", switched_off.stdout.strip().splitlines()[-1:] == ["None"], switched_off.stdout[-200:] + switched_off.stderr[-200:])
+
 print(f"\n{len(failures)} failed" if failures else "\nall checks passed")
 sys.exit(1 if failures else 0)

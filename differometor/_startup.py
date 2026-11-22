@@ -30,10 +30,12 @@ kind (C)  does not remove work either. It leaves a module that the benchmark scr
           its header, but uses only when it writes its report, unloaded until that use. The
           module's code then runs after the timed phases instead of inside the timed imports.
           See DEFER_REPORT_MODULES; the part of it that concerns JAX is of kind (A).
+kind (D)  removes waiting for the disk, not work: file pages the process is going to read are
+          requested from the kernel early, so that they are read side by side. See PREFETCH.
 
 For measurements the switches can be overridden per process without editing this file:
 ``DIFFEROMETOR_STARTUP`` is a comma separated list out of ``gc``, ``lazy``, ``defer``,
-``dataclass``, ``jits``, ``report``, ``preimport`` (or ``none``) and replaces the seven early switches; ``DIFFEROMETOR_GC`` replaces ``GC_RUN``.
+``dataclass``, ``jits``, ``report``, ``prefetch``, ``preimport`` (or ``none``) and replaces the eight early switches; ``DIFFEROMETOR_GC`` replaces ``GC_RUN``.
 """
 import sys
 
@@ -100,6 +102,27 @@ DATACLASS_CODE_FILE = "_dataclass_code.bin"
 # Needs a carrier that runs before the header's `import hashlib` (argparse.py or the .pth hook).
 # A module that something does need earlier is simply loaded then.
 DEFER_REPORT_MODULES = True
+
+# early, kind (D): ask the kernel early for the file pages a start with a cold file cache will
+# read. Neither work nor results change; what goes away is waiting. A process that starts
+# with a cold cache (first run on a machine, fresh job) reads about 160 MB from disk before
+# the timed phases end, 120 MB of them pages of jaxlib/libjax_common.so, and it reads them
+# one page fault after the other. The table PREFETCH_FILE lists for the files of the installed
+# packages which byte ranges a benchmark run touched (recorded on the Xeon VM with
+# runs/philip/prefetch_map.py, 277 files, 145 MB). When the carrier runs, these ranges are
+# requested with posix_fadvise(WILLNEED): the kernel starts all the reads at once and the
+# imports find the pages in the cache or on their way.
+#   * A file is used only if it exists under the same relative path with the recorded size;
+#     another package version is simply skipped. A wrong or missing hint costs or saves
+#     waiting time, never a result.
+#   * With a warm cache nothing is requested: one read of a single byte that must not wait
+#     (preadv with RWF_NOWAIT) at three places of the largest file tells whether its pages are
+#     in memory; only if one is not does the prefetch run.
+# Measured on the Xeon Platinum 8468 with the cache emptied before each process (job
+# prefetch-0114): first run UIFO 1528 -> 512 ms, aLIGO 1501 -> 475 ms.
+PREFETCH = True
+PREFETCH_FILE = "_prefetch.bin"
+PREFETCH_STEP = 128 * 1024  # bytes per request; the kernel serves at most one read-ahead window per call
 
 # early, kind (A): the jit objects of JAX's own functions are built on first use. `import jax`
 # decorates 323 of its functions with `jax.jit` (most of jax.numpy and lax); for each one JAX
@@ -177,12 +200,13 @@ def _early_options():
                 ("dataclass", DATACLASS_CODE),
                 ("jits", LAZY_JITS),
                 ("report", DEFER_REPORT_MODULES),
+                ("prefetch", PREFETCH),
                 ("preimport", PREIMPORT),
             )
             if on
         }
     return {part.strip().lower() for part in value.split(",")} & {
-        "gc", "lazy", "defer", "dataclass", "jits", "report", "preimport"}
+        "gc", "lazy", "defer", "dataclass", "jits", "report", "prefetch", "preimport"}
 
 
 # --------------------------------------------------------------------------------------------
@@ -811,6 +835,58 @@ class _Watcher:
             self._busy = False
 
 
+def _prefetch(note):
+    """Request the pages listed in PREFETCH_FILE if the file cache is cold. Fills `note`."""
+    import marshal
+    import os
+    import time
+
+    started = time.perf_counter()
+    if not hasattr(os, "posix_fadvise"):
+        note["state"] = "off: no posix_fadvise on this platform"
+        return
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), PREFETCH_FILE), "rb") as file:
+        table = marshal.loads(file.read())
+    roots = [root for root in sys.path if type(root) is str and root]
+    advise, willneed = os.posix_fadvise, os.POSIX_FADV_WILLNEED
+    files = calls = total = 0
+    for relative, size, ranges in table:
+        fd = -1
+        for root in roots:
+            path = root + "/" + relative
+            try:
+                if os.stat(path).st_size == size:
+                    fd = os.open(path, os.O_RDONLY)
+                    break
+            except OSError:
+                continue
+        if fd < 0:
+            continue
+        try:
+            if not files and hasattr(os, "preadv") and hasattr(os, "RWF_NOWAIT"):
+                # The first file found (the table starts with the largest): are its pages in memory?
+                try:
+                    for offset, _ in (ranges[0], ranges[len(ranges) // 2], ranges[-1]):
+                        os.preadv(fd, [bytearray(1)], offset, os.RWF_NOWAIT)
+                    note.update(state="warm cache, nothing requested", seconds=round(time.perf_counter() - started, 5))
+                    return
+                except BlockingIOError:
+                    pass  # not in the cache: go on
+                except OSError:
+                    pass  # this file system cannot answer: request, it costs little
+            files += 1
+            for offset, length in ranges:
+                end = offset + length
+                total += length
+                while offset < end:
+                    advise(fd, offset, min(PREFETCH_STEP, end - offset), willneed)
+                    offset += PREFETCH_STEP
+                    calls += 1
+        finally:
+            os.close(fd)
+    note.update(state="requested", files=files, calls=calls, megabytes=round(total / 1e6, 1), seconds=round(time.perf_counter() - started, 5))
+
+
 def _is_benchmark_process():
     import os
 
@@ -871,6 +947,13 @@ def early(carrier="pth"):
     info = {"carrier": carrier, "early": []}
     setattr(sys, _STATE_ATTRIBUTE, info)
     options = _early_options()
+    if "prefetch" in options:
+        note = info["prefetch"] = {}
+        try:
+            _prefetch(note)
+        except Exception as error:  # never stand in the way of the process
+            note["state"] = f"off: {type(error).__name__}: {error}"
+        info["early"].append("prefetch")
     if "dataclass" in options:
         try:
             info["dataclass_code"] = _install_dataclass_code()
