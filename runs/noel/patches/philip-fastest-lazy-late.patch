@@ -1,0 +1,119 @@
+From 4ab25c8b2e3959854d6c2ddf745b0088fdf13373 Mon Sep 17 00:00:00 2001
+From: Noel Blatter <noel.blatter@gmail.com>
+Date: Sun, 22 Nov 2026 03:37:39 +0100
+Subject: [PATCH] Start-up: multihost_utils stays unloaded through the first
+ device_put
+
+jax._src.dispatch imports jax.experimental.multihost_utils inside the function behind
+the first device_put (the first jnp.asarray of a run) and uses it for sharded arrays
+only. The module is in LAZY_MODULES, but the finder that hands out the lazy loader is
+removed when import jax has finished, so the module was executed in full, together with
+jax._src.prng, jax.sharding and jaxlib.gpu_prng. It is now created lazily right before
+the finder goes (LAZY_LATE_MODULES). Anything that uses it later gets the real module.
+
+First jnp.asarray in Docker (arm64 Linux, one CPU): 1.8 to 2.1 ms -> 0.24 to 0.34 ms.
+Build phase of the grid benchmark, twelve fresh runs in turn: 9.8 -> 8.3 ms on arm64
+Linux, 64.5 -> 61.9 ms in the emulated x86-64 image.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ .../__pycache__/_startup.cpython-312.pyc      | Bin 43492 -> 44006 bytes
+ differometor/_startup.py                      |  14 ++++++++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/differometor/__pycache__/_startup.cpython-312.pyc b/differometor/__pycache__/_startup.cpython-312.pyc
+index fc835341701d59ab991948d86ed06b22778a9ece..6a07407021e3905c8c454365c5e62e980dd37e70 100644
+GIT binary patch
+delta 2003
+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
+
+delta 1529
+zcmYjQdrVVT7(d@>i=$LpkQNH9EzeRORYWVkaWg_xMle2N<3bqcR$=1sR%JdWh|FO!
+zMRpP&n~6gge00XeGv*)L5}A()%A!uEb4KGd&dtYoOh;Vi_MJMq-Q4`{Iltd`zVG*)
+zd(OS9^zL`mbZ+=?y@n8?y{tr+onPP3YO=uER@cI~CgL+O17Zv%N-P`RM5<l<=4M-c
+z5HK7cUtCCtZX#jE%xHy$k|M&4O@x_(^xw#M7K4crSS+G7q>n&7F03aqvoDERd^Q%3
+z5q6e<IFe0e)+X>dSR&4xED13gxq2ItDOlRDlrZ~#2p3OfBYkPi;Y$w{aAJXEB{nE~
+z!^fAwQZRvwr6OjsG(<PkDem&D7djy<9l30lftbTwh`Ffe{!h<Ta;tz*{wbL2-Fvh?
+z56eOqE|xXqK&pNk;<AT0#m#c|P$k<>SuQG>EO$tG5zRb%G`>+G$D`2k=<t?|4sm(N
+zjlp%XO1Mwikw4T@9?M6YDC2&Q#lUgl#rYx5i`@7yH#Wo-AU7e*jbjrrgO^Q09M7h)
+z$+)!zYzodMtfB5gahMhuc!DvR-;VZ*LSqo1O*}M3X`o#Uj_?AU;G@iQp;I)PYcz0?
+z_a@wiEBuo6Ec_@wOw<G16zxeCfV=!F+eP@5x7fdjN8CSBz-f`_xDL=Ko;a^+AxiY5
+zZwC6Di1{uD1t(wS?uJxRn6;8ZhUmyq0P=Z~hk;!*c)BPQ^I3VjV5Yc}w+UdjSd#xI
+zg)&j;t<pg~@0s)*R*CbImjn34q^UC~yeAq8JEUjtjQtdjiR&|G0qhj%#qUt~mIr68
+zfpa2#b{oJo{>_{qToHki9RNRZeW?#_38i!lg#o^+Y&AR(#<^{j{te>Tys}|n5Zc9M
+zI(UUIs8FF$bX82JP{gBHA9%%IY!INDKlKNoN>neg>tMZTUN#LNAkNlA>Cnt&)eg`i
+z`UCMAILh^PpQE$Rx*&xPQM0xL;A{THx*YgK++SA%(8U+LeH40lXI-jrZ^+ib1u=i)
+zUVxu5C{=$1Z=@>Wj7Zt^T)Iu(JddwyjEs3556VswNmdS>a$dW^%wHR0;j7;@rbi61
+zX++fkSwz;5I`Wog5vc>U8a208EhfCQ*}CivoCV~)cdBy`)#Er`Yb;+_v9fZhqIy)N
+z=FQd0GraDBY?K>FFV#fG+%OnhO16|-H8?LCoFBzqF=PzhFk1TwM8^DJF!gHi`z&C<
+z_(n$x*%#^2908A}Qp;C3;>3zAFKgix|7>e2oaWcIPLDVxdpyk@+v2S!W%1Z>aeviv
+zRvxHTDv2oFRzTq-Z{BXRJ&<NBn7oPfQJwCkfoPpBsXtn)i}~HaPi(&f-TdQLm+l<q
+z@`wwq_&d9K%I=ngP9)rV^;KDJ3NF8{t*l)YP`i28?ghGg$c__fAGn4=9iP+ohwY{e
+z`%;2Tq)J`ggn$`-;pO{Ep;8>(XVJoaex}_8Px#~ZjnKzy4<zUZWT=Ej{{DeW5f9~}
+ziM;w?zWJ$C1|>X}@JPZfe*ECxh+aATjW0fwV*0OKkt7HBwnKLPGaTYe0?EANPz_{?
+U?87_2Pzd1YBNF>(@}8jeAJ-7KP5=M^
+
+diff --git a/differometor/_startup.py b/differometor/_startup.py
+index 6a6214d..f4716f9 100644
+--- a/differometor/_startup.py
++++ b/differometor/_startup.py
+@@ -147,6 +147,14 @@ LAZY_MODULES = frozenset({
+     "jaxlib.mlir.dialects.builtin", "jaxlib.mosaic.python.mosaic_gpu", "jaxlib.mosaic.python.tpu",
+ })
+ 
++# Modules of LAZY_MODULES that JAX imports inside a function, after `import jax` is done:
++# `jax._src.dispatch._device_put_sharding_impl` imports `multihost_utils` on the first
++# `device_put` (the first `jnp.asarray` of a run) and only uses it for sharded arrays. The finder
++# that hands out the lazy loader is gone by then, so the module would be executed in full
++# (with `jax._src.prng`, `jax.sharding` and `jaxlib.gpu_prng` behind it). It is created, lazily
++# like the others, right before the finder goes (`_Watcher.remove`).
++LAZY_LATE_MODULES = ("jax.experimental.multihost_utils",)
++
+ # What the header of benchmark.py imports (lines 6 to 40), in its order. Used by PREIMPORT only.
+ _BENCHMARK_HEADER = (
+     "argparse", "datetime", "hashlib", "importlib.metadata", "json", "os", "pathlib", "platform",
+@@ -760,6 +768,12 @@ class _Watcher:
+         self._busy = False
+ 
+     def remove(self):
++        for name in LAZY_LATE_MODULES:  # while this finder can still hand out the lazy loader
++            if name in self.lazy and name not in sys.modules and name.rpartition(".")[0] in sys.modules:
++                try:
++                    __import__(name)
++                except Exception:
++                    sys.modules.pop(name, None)
+         try:
+             sys.meta_path.remove(self)
+         except ValueError:
+-- 
+2.53.0
+
