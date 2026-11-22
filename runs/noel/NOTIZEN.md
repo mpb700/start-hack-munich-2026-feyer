@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 10:15, nach Runde 37 (Feature-Freeze seit 10:00: nur noch Abgleich, alle Branches unverändert). Davor Runde 36. **Neu auf Noels Ja: Vorschlag C als Patch**, `patches/max-next-heap.patch` (Basis `origin/max/next` `67f0055`) und `patches/philip-fastest-heap.patch` (Basis `main` `a2799ba` nach `lazy-late`). Nicht auf `main`, nicht auf dem Xeon gemessen, Regelfrage B6 offen. `max/next` ist auf x86 mit C-Kern vollständig geprüft (22 von 22 Skripten grün, Arrays bitgleich zu `main`). Ab 10:00 Feature-Freeze: Die Schleife prüft nur noch den Stand.
+Stand: So 22.11.2026, 11:12, nach Runde 38 (Prüfung auf Noels Frage: bleibt das Kompilieren bei 0 ms, wenn das Setup wechselt?). **Ja auf `origin/max/next`; auf `main` nicht bei Setups mit zwei Detektor-Ports (Balanced Homodyne)**, siehe unten. Feature-Freeze seit 10:00, nichts gebaut. `main` `a2799ba`, `max/next` `67f0055`, offene Patches: `lazy-late`, `heap` (zwei Fassungen), `dockerfile`.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -159,6 +159,24 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 - Der Patch enthält den neu erzeugten Bytecode von `build.py` (checked-hash, Python 3.12.15). Er berührt weder den nativen Pfad noch `fast.py`.
 - Geteilt werden nur Arrays, die `set_instructions` nie verändert (Ausgabe-Auswahl und Funktionseingaben). Sie sind schreibgeschützt, ein versehentliches Ändern würde also sofort auffallen. Positionen in den Systemmatrizen bleiben eigene Arrays, weil die Seitenband-Erweiterung sie an Ort und Stelle verschiebt.
 - Wo die Build-Zeit danach steckt (M4, 3,4 ms): rund 2'400 `np.array`-Aufrufe für Positionslisten, die Seitenband-Erweiterung (224 Aufrufe), der Rumpf von `build()` und das Zusammenführen in `pairs_to_arrays`. Mehr wäre nur mit einem Umbau zu holen, der pro Bauteil-Art alle Bauteile auf einmal behandelt.
+
+**Runde 38 (22.11., 11:08 bis 11:12): Bleibt das Kompilieren bei 0 ms, wenn das Setup wechselt?** Noels Frage um 11:07: Hält die 0 nur, weil dasselbe Setup wiederholt wird und ein Cache greift, oder auch, wenn zwischen den Läufen das Setup wechselt und jeder Lauf kalt ist?
+
+*Aus dem Code (`_interpret.py`):* Die 0 ms sind kein Cache. `Traced.lower` baut für jedes kleine Programm bei jedem Aufruf ein neues `_Program` (eine Liste von NumPy-Schritten), `compile()` verpackt es nur. Zu XLA geht ein Programm, wenn es eine Operation enthält, die der Interpreter nicht kennt, mehr als 200 Gleichungen hat (`SMALL_PROGRAM_OPERATIONS`) oder besondere Kompilieroptionen verlangt.
+
+*Gemessen* mit `runs/noel/switch_setups.py` (neu, mit `switch_cases.py`): 15 verschiedene Setups (Fixture, aLIGO in drei Modi, Voyager, acht Zufallsgitter in drei Grössen, Fixture mit 37 Frequenzen, Fixture nochmals) gehen mit frischen jit-Objekten durch die Stufen von `benchmark.py`. Docker arm64, eine CPU, Zeiten in ms:
+
+| Stand | Setups mit einem Port | Setups mit zwei Ports (Voyager, Zufallsgitter mit Homodyne) |
+| --- | --- | --- |
+| `main` `a2799ba`, kalt im frischen Prozess | alle drei Programme interpretiert, Kompilieren 0,01 / 0,00 / 0,00, Lower + Kompilieren 6,4 bis 6,8 | **Gradient-Programm geht zu XLA**: Kompilieren 5,7 bis 6,1, Gradient-Lower 2,4 bis 2,5 statt 1,0, zusammen 14,2 bis 14,9 |
+| `main`, alle Setups nacheinander in einem Prozess | Kompilieren 0,00, Lower + Kompilieren 4,5 bis 6,6 | Kompilieren 5,4 bis 6,9, zusammen 11,9 bis 13,7 |
+| `max/next` `67f0055`, kalt im frischen Prozess | interpretiert, Kompilieren 0,01 / 0,00 / 0,00, zusammen 6,4 bis 7,1 | **interpretiert**, Kompilieren 0,01 / 0,00 / 0,00, zusammen 7,7 bis 8,0 |
+| `max/next`, alle nacheinander in einem Prozess | Kompilieren höchstens 0,01, zusammen 4,4 bis 6,7 | Kompilieren 0,00, zusammen 5,5 bis 5,8 |
+
+- Was bei jedem neuen Setup wieder anfällt, ist das Tracing (Lower): 4,4 bis 8,0 ms auf arm64. Das ist keine Kompilierzeit und steckt im Erstlauf von `benchmark.py` schon drin. Nur ein unverändertes Setup profitiert von JAX' Trace-Cache (Fixture ein zweites Mal im selben Prozess: 0,9 ms statt 6,6 ms).
+- Die Lücke auf `main` ist die aus Runde 27 (`pad` und `add_any` im Gradient-Programm bei zwei Ports). Emuliert auf x86 kostet sie rund 500 ms (Homodyne-Variante 1'054 bis 1'078 gegen 527 bis 587 ms), auf dem Xeon geschätzt 15 bis 20 ms. `max/next` (`8fb61ed`) schliesst sie.
+- Grenzen der Aussage: Ein anderer Readout als der von `benchmark.py` könnte Operationen enthalten, die der Interpreter nicht kennt (dann wird dieses eine Programm kompiliert, wenige ms). Ein Setup, das der schnelle Weg nicht abdeckt (mehr als ein Rauschdetektor, andere Verknüpfungsfunktion als `sqrt`), fiele auf die dichte JAX-Simulation zurück und würde voll kompiliert wie in der Baseline; alle 15 Setups hier nahmen den schnellen Weg. Nicht neu gemessen.
+- Nebenbefund, Ursache nicht untersucht: Das Zufalls-Setup «uifo2 seed 0» mit meinen Zufallswerten liefert auf beiden Ständen kein endliches Ergebnis.
 
 **Runde 37 (22.11., 10:14 bis 10:15): Abgleich im Feature-Freeze, nichts gebaut.** Alle Branches unverändert seit 09:42: `main` `a2799ba`, `max/next` `67f0055` (nicht auf `main`), `philip-fastest` `3c0828f`, `philip` `c29332c`. Die Patches `lazy-late` und `dockerfile` passen auf `main`, `max-next-heap` passt auf `max/next`. Offen bleiben die Xeon-Messungen (`73d2075`, `max/next`, Heap-Patch) und der Entscheid, was auf `main` kommt. Akku 60 %, der Mac hängt nicht am Strom.
 
