@@ -1,6 +1,6 @@
 # Optimierung auf Branch `noel`: Stand, Messmethode, offene Ideen
 
-Stand: So 22.11.2026, 04:15, nach Runde 30. **Die Schleife läuft seit 04:20 wieder, jetzt stündlich** (Noel: «Iterier jede Stunde drüber»; davor um 04:10 beendet, Auftrag `01bbf197` gelöscht). Ab So 10:00 gilt der Feature-Freeze. `main` steht auf `a2799ba` (Code wie `73d2075`, mit Carrier-Patch). **Offen als Patch auf `noel`: `patches/philip-fastest-lazy-late.patch`** (auf Noels Ja gebaut, nicht auf `main`). Vorschlag C (Heap) liegt nur im Scratchpad, Vorschlag A baut Max auf `origin/max/next`. Xeon-Messungen für `73d2075` und den neuen Patch fehlen.
+Stand: So 22.11.2026, 04:15, nach Runde 30. **Die Schleife läuft seit 05:16 wieder, jetzt stündlich** (Noel: «Iterier jede Stunde drüber»; davor um 04:10 beendet, Auftrag `01bbf197` gelöscht). Ab So 10:00 gilt der Feature-Freeze. `main` steht auf `a2799ba` (Code wie `73d2075`, mit Carrier-Patch). **Offen als Patch auf `noel`: `patches/philip-fastest-lazy-late.patch`** (auf Noels Ja gebaut, nicht auf `main`). Vorschlag C (Heap) liegt nur im Scratchpad, Vorschlag A baut Max auf `origin/max/next`. Xeon-Messungen für `73d2075` und den neuen Patch fehlen.
 
 **Zuerst lesen:** «Arbeit für Philips Stand» gleich unten, dann «Runde 14», «Stand 20:12» und «Runde 12», dann «Runde 9: Setup-Varianten» und «Stand der anderen Branches». (Die Zeitangaben «15:40» und «15:50» in den Commits `0ada44e` und `8a4d2fe` waren falsch geschätzt. Runde 9 war um 15:13 fertig. Hier ist das korrigiert.) Philips Stand ist auf dem echten Xeon deutlich schneller als `noel`, fällt aber bei einem Balanced-Homodyne-Setup auf JAX zurück.
 
@@ -163,7 +163,7 @@ Zum Build-Patch (Runde 15, 21:02 bis 21:18):
 
 - *Stand der Branches um 04:00:* `main` auf `a2799ba` (Max, 03:59, nur `main-pitch/SCRIPT_EN.md`), `max/next` unverändert `8fb61ed`, sonst nichts Neues.
 - Anwenden: `git show origin/noel:runs/noel/patches/philip-fastest-lazy-late.patch | git am` (lokal `4ab25c8`, bringt den Bytecode von `_startup.py` mit).
-- Geprüft: beide Benchmarks `PASS`, alle Arrays bitgleich gegen `main` (Mac und x86-Image). Mac: alle 15 Prüfskripte, `test_carrier.py` und neu `runs/noel/test_lazy_late.py` grün. x86-Image: alle 17 Skripte grün (Nachtrag 04:20, der Lauf war beim ersten Eintrag noch nicht fertig).
+- Geprüft: beide Benchmarks `PASS`, alle Arrays bitgleich gegen `main` (Mac und x86-Image). Mac: alle 15 Prüfskripte, `test_carrier.py` und neu `runs/noel/test_lazy_late.py` grün. x86-Image: alle 17 Skripte grün (Nachtrag 05:16, der Lauf war beim ersten Eintrag noch nicht fertig).
 - `test_lazy_late.py`: Modul ist nach dem Kopf von `benchmark.py`, nach `jnp.asarray`, `jit` und `device_put` lazy, lädt bei Benutzung normal (`broadcast_one_to_all` rechnet); mit `DIFFEROMETOR_STARTUP` ohne `lazy` oder `DIFFEROMETOR_STARTUP_SHADOW=0` wird nichts angelegt.
 - **Mit `origin/max/next`:** Max ändert `_startup.py` stark (+398 Zeilen), `_Watcher.remove` aber nicht. Nach dessen Übernahme passt der Bytecode im Patch nicht mehr: dann nur den Quelltext nehmen (`git apply --3way --include=differometor/_startup.py`) und `bash runs/philip/bytecode.sh python3.12` laufen lassen. Nicht ausprobiert.
 - Vorschlag C (Heap in grossen Schritten) bleibt ungebaut im Scratchpad (`r27/vorschlag/`), Regelfrage B6 und ohne Xeon-Messung.
@@ -1090,7 +1090,7 @@ Joels README nennt für seinen Stand auf einem AMD EPYC (x86-Linux, 1 CPU) 762 m
 - `benchmark.py`, Fixtures und `requirements.txt` bleiben unangetastet. Keine Caches, nichts vorberechnen.
 - Discord (Noel am 21.11. gegen 14:35): Feyer schreibt dort laufend neue Infos. Mitlesen, wenn es geht, aber **im Discord strikt nichts schreiben und keine Fragen stellen**. Stand 15:13: Der eingebaute Browser ist bei Discord nicht angemeldet, den Zugriff auf die Discord-App hat Noel abgelehnt. Neue Nachrichten kommen also über Noel.
 - Noel am 21.11. um 20:54: caffeinate wieder starten, Schleife alle 30 Minuten (:13 und :43).
-- Noel am 22.11. um ca. 04:20: «Iterier jede Stunde drüber». Neue stündliche Schleife (Minute :07), `caffeinate` läuft wieder. Regeln wie bisher, Basis ist `origin/main`.
+- Noel am 22.11. um 05:15: «Iterier jede Stunde drüber». Neue stündliche Schleife (Minute :07), `caffeinate` läuft wieder. Regeln wie bisher, Basis ist `origin/main`.
 - Noel am 22.11. um 04:10: «Hör danach auf mit der Schleife, es reicht». Auftrag `01bbf197` gelöscht, keine weiteren Runden.
 - Noel am 22.11. um 04:00: «Ja, B als Patch» (ein JAX-Modul bleibt lazy). Freigabe für den Patch auf `noel`, nicht für `main`.
 - Noel am 22.11. um 03:56: «Ja, auf main», auf die Frage nach dem geprüften Carrier-Patch. Ausgeführt um 03:57 (`e770ba2..73d2075`). Das war eine Freigabe für genau diesen Commit, nicht für die Vorschläge B und C aus Runde 27.
