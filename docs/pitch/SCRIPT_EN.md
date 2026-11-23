@@ -83,7 +83,7 @@ We made every step faster. What the search finds is still out there. Thank you.
 
 ## Speedup sentence: variants
 
-Swap only the bold sentence. Numbers from `technical-pitch/PITCH.md` on
+Swap only the bold sentence. Numbers from `docs/pitch/PITCH.md` on
 `origin/main`, as of 22 Nov, 02:39 (commit `e770ba2`).
 
 | Variant | Sentence | Basis |

@@ -90,7 +90,7 @@ Was geändert wurde:
 | SuperLU mit `Relax=1`, `PanelSize=1`, zwei Löser-Aufrufe pro Frequenz statt drei | Vorwärtslauf 43 → 30 ms |
 | Plotly erst bei Bedarf laden | ca. 7 ms weniger Import |
 
-Die Abweichungen zum Original-JAX sind unverändert (Sensitivität 5,8e-9, Gradient 8,0e-8). Details, Messmethode und offene Ideen stehen in [`runs/noel/NOTIZEN.md`](runs/noel/NOTIZEN.md). Die Tabellen weiter oben zeigen den Stand vor dieser Runde.
+Die Abweichungen zum Original-JAX sind unverändert (Sensitivität 5,8e-9, Gradient 8,0e-8). Details, Messmethode und offene Ideen stehen in [`runs/noel/NOTIZEN.md`](../../runs/noel/NOTIZEN.md). Die Tabellen weiter oben zeigen den Stand vor dieser Runde.
 
 ## Zweite Runde vom 21.11. (Branch `noel`)
 

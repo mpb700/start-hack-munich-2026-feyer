@@ -329,7 +329,7 @@ Sollwerte (Stand `e311d5c`, auf Noels M4, unverändert seit Runde 2):
 | Einfache Unbekannte vorab in NumPy herausrechnen (751 → 324 Unbekannte) | In Runde 3 nachgerechnet (Schätzung): Zerlegung und Lösen würden rund 5,6 ms sparen, die Vorab-Rechnung und das Zurückrechnen für beide Löserichtungen kosten rund 5 ms. Dafür rund 150 Zeilen neue Sparse-Algebra |
 | Zweiter Rückwärts-Callback hinter `lax.cond` | Durch Nr. 13 erledigt: Die Signalmatrix wird gar nicht mehr übergeben |
 | Zwischenergebnisse des Forward-Laufs im Prozess aufheben (Token) | Wäre ein Cache. Abmachung: keine Caches |
-| XLA-Flags, Kompilier-Cache, `jax.config`-Schalter, `mallopt`, Allocator mit einer grossen Anforderung «vorwärmen» | Regelfrage, siehe `FRAGEN_AN_FEYER.md` (B6) |
+| XLA-Flags, Kompilier-Cache, `jax.config`-Schalter, `mallopt`, Allocator mit einer grossen Anforderung «vorwärmen» | Regelfrage, siehe `docs/notes/FRAGEN_AN_FEYER.md` (B6) |
 | Rückgabe von Stellvertreter-Objekten statt Arrays, um den Readout zu umgehen | Wäre Schummeln |
 | Prüfung der dichten Matrizen in XLA statt im Callback | Jede echte XLA-Operation kostet 5 bis 15 ms Kompilierzeit, mehr als die Kopie. Seit Runde 6 gegenstandslos: Es gibt keine dichten Matrizen mehr |
 

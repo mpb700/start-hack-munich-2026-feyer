@@ -10,3 +10,10 @@ benchmark*.pdf
 benchmark*.svg
 *.npz
 examples/results/
+
+# local working folders (measurement archives, agent worktrees, Docker output)
+_nacht/
+.claude/
+.worktrees/
+out/
+.DS_Store

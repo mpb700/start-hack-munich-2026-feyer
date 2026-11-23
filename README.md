@@ -1,148 +1,147 @@
-# Faster Physics — START Hack Munich 2026
+# Differometor, about 300× faster
 
-Make **Differometor** faster for general optical setups while preserving its physical predictions and gradients.
+**1st place in Feyer's "Faster Physics" challenge and 3rd place overall at START Hack Munich 2026** (team ALT CONTROL ELITE).
 
-This repository includes the public simulator source, example data, [challenge PDF](challenge.pdf), [judging criteria PDF](judging-criteria.pdf), [editable brief](challenge.docx), a short [start-here example](start_here.py), the [original benchmark](benchmark.py), and a second [aLIGO benchmark](benchmark_aligo.py). No separate simulator checkout or GPU is required.
+The task: make [Differometor](https://github.com/artificial-scientist-lab/Differometor), a differentiable simulator for gravitational-wave detectors, as fast as possible on one CPU core, without changing its physical results or its gradients. What counts is the complete first run of a fresh process, including imports and compilation.
 
-**Final evaluation uses a different optical setup**, a slight variation of the supplied example. Use this example to develop and benchmark improvements that carry over to other optical setups.
+On Feyer's final evaluation setup, the unmodified simulator needs **29.969 s**. Ours needs **0.098 s**.
 
-## Start here
+![Feyer's result chart: complete first-run time of the baseline and of all submissions](media/results-start-hack-munich-2026.jpg)
 
-Use **Python 3.12 on Linux or WSL2**, with **32 GB RAM recommended**. Clone the repository:
+*Feyer's official result chart (22 November 2026, one logical CPU of an Intel Xeon Platinum 8468).*
 
-```bash
-git clone https://github.com/feyerlabs/start-hack-munich-2026.git
-cd start-hack-munich-2026
-```
+## What the simulator computes
 
-Alternatively, [download the ZIP](https://github.com/feyerlabs/start-hack-munich-2026/archive/refs/heads/main.zip), unpack it and open a terminal in its root folder. Then install and run:
+A detector design is a graph of mirrors, beamsplitters, lasers and free space. The simulator turns it into sparse linear systems and answers three questions: where is the laser light, what does a gravitational wave do to it at each frequency of interest, and how much quantum noise reaches the detector. From that follows the detector's sensitivity. An optimizer then asks for the gradient of that sensitivity with respect to every design parameter and turns all of them a little. The challenge workload is one such step: 101 frequencies, 193 design variables, double precision.
+
+The original runs everything through JAX and XLA with dense 751×751 matrices. More than half of its first run is compilation.
+
+## What we changed
+
+**1. Sparse solves on the host instead of dense solves in XLA.**
+The matrices are more than 99 % empty. [`differometor/fast.py`](differometor/fast.py) assembles them as sparse matrices and factorizes them directly. The matrix entries still come from the simulator's own, unchanged component formulas; they are only evaluated with NumPy instead of being traced. Setups this path does not cover fall back to the original JAX code, so nothing stops working.
+
+**2. The physics allows a shortcut.**
+Most unknowns of an interferometer are simple: sources, read-only ports, and fields that combine a few others with coefficients of magnitude at most 1. They can be eliminated exactly, with array operations over all frequencies at once. That leaves 200 of 751 unknowns for the solver on the challenge setup and 20 of 82 on aLIGO.
+
+**3. One pivot sequence for all frequencies.**
+All 101 systems share one sparsity pattern. A small C kernel ([`pattern_lu.c`](differometor/_native/pattern_lu.c)) factorizes them together with a single pivot sequence, so each arithmetic step becomes a plain vector loop over the frequencies. Every pivot is checked at every frequency. If a check fails, or where the kernel is not available (it is built for x86-64 Linux), the elimination from point 2 followed by SuperLU does the work.
+
+**4. A hand-written reverse pass.**
+Signal and noise are read through the same detector weights, so the adjoint the gradient needs already falls out of the forward pass. The gradient costs about a quarter of a forward pass. The derivatives of the physics formulas are not written by hand either: the same component functions are evaluated on dual numbers.
+
+**5. No compiler for a hundred numbers.**
+With the physics on the host, the programs left for XLA are a few dozen elementwise operations. [`differometor/_interpret.py`](differometor/_interpret.py) runs such small programs with NumPy instead of lowering and compiling them. Same operations, same inputs, nothing cached.
+
+**6. Start-up.**
+After all that, most of the remaining first run is `import jax`. [`differometor/_startup.py`](differometor/_startup.py) removes work from it: modules the run never touches are loaded on first use, the garbage collector pauses during imports, bytecode is shipped. Every measure has its own switch, and the file keeps measures that remove work apart from measures that only move work behind the timers.
+
+**7. A harness without JAX.**
+Feyer's [`benchmark.py`](benchmark.py) is untouched. Next to it, [`benchmark_native.py`](benchmark_native.py) runs the same workload and the same correctness checks, but calls the host path directly and never imports JAX. It shows what the simulator itself costs once the framework around it is gone, and it is the harness the official 0.098 s was measured with. (The file still calls itself "not the scored benchmark"; that line was written before the final evaluation.)
+
+## Numbers
+
+Official result on the final setup, measured by Feyer:
+
+| | Complete first run |
+| --- | ---: |
+| Baseline (unmodified simulator) | 29.969 s |
+| This repository, with `benchmark_native.py` | **0.098 s** |
+
+Our own measurements on the two public setups. Same CPU model as Feyer's machine (Xeon Platinum 8468 VM, one logical CPU), first run of a fresh process, measured in alternating series:
+
+| | Feyer's baseline report | `benchmark.py`, our simulator | `benchmark_native.py` |
+| --- | ---: | ---: | ---: |
+| Challenge setup (3×3 UIFO), first run | 44.204 s | 215 ms | **74 ms** |
+| aLIGO, first run | 25.309 s | 185 ms | **44 ms** |
+| Challenge setup, each further step | 17.679 s | 28 ms | |
+
+Read these with two caveats. Our values are with a warm file cache; Feyer's baseline reports look like cold runs. Cold against cold, an earlier state of this code needed 1.25 s against 44.2 s with `benchmark.py`. And the "further step" row is from that earlier state too; each number's commit and method is in the notes linked below.
+
+Peak memory is about 300 MB instead of 14.4 GiB (measured in Docker on an Apple M4).
+
+## Correctness
+
+Nothing is precomputed and no calculation is left out. Both public benchmarks print `PASS`, with Feyer's harness and with ours.
+
+- Challenge setup against Feyer's reference: 5.37e-6 in log sensitivity (tolerance 1e-5). The unmodified simulator has the same deviation from that reference.
+- aLIGO against Feyer's reference: 2.9e-11 (tolerance 1e-6).
+- Against the original dense JAX path on varied setups (random UIFOs of several sizes, aLIGO and Voyager in several modes, other frequency grids, subsets of design variables): 1.5e-7 or better. The one exception is Voyager with amplitude modulation, where we measured up to 9e-6.
+- On an ill-conditioned test system (condition number 1e15), the original is 2e-5 away from the exact solution and this code 3e-11.
+
+The test scripts are in [`runs/`](runs), for example `runs/philip/test_genauigkeit.py` (elementwise accuracy), `runs/noel/test_adjoint.py` (reverse pass) and `runs/max/test_interpret.py` (interpreter). Run them with `PYTHONPATH=.` from the repository root.
+
+## Run it
+
+Python 3.12 on Linux or WSL2 (`--cpus 1` needs Linux CPU affinity; on macOS leave it out).
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip install -e .
-python start_here.py
-```
 
-[`start_here.py`](start_here.py) walks through one complete simulation and gradient calculation in five steps. It prints setup time, compilation time, and combined simulation/sensitivity/gradient runtime. It runs once using the CPUs available to the process.
-
-For reproducible measurements, numerical checks and the five-bar plot, use the full benchmark:
-
-```bash
-python benchmark.py --cpus 1 --output benchmark-baseline.json
-```
-
-`--cpus 1` pins the process to one logical CPU on Linux/WSL. The full benchmark takes roughly 5 minutes for ten repetitions and validation, prints `PASS`, and writes `benchmark-baseline.json` and `benchmark-baseline.png`. Use `--repeats 3` for a shorter run or `--save-arrays baseline.npz` to save outputs. The measured peak memory was about 14.4 GiB.
-
-## If setup fails
-
-- **Python missing:** install Python 3.12 first. On Debian/Ubuntu, the matching `python3.12-venv` package may also be needed for virtual environments.
-- **Windows:** use WSL2 and make enough RAM available to it. The single-CPU command uses Linux process affinity.
-- **Process killed / out of memory:** close other memory-heavy applications or use a machine with more available RAM. Reducing `--repeats` shortens the run but does not reduce peak memory.
-- **Numerical check fails:** restore the unchanged public fixtures and run the unmodified baseline with the pinned dependencies before investigating your changes.
-
-## Development benchmark
-
-The supplied example uses one complete saved 3×3 optical setup, all **101 frequencies from 800–3000 Hz**, and gradients for **193 physical design variables**. Every evaluation computes carrier fields, signal, quantum noise, detector sensitivity, powers and the gradient of mean log sensitivity relative to the public reference.
-
-In `benchmark.py`, the complete first-run total includes input preparation, all compilation, the forward simulation, sensitivity and gradients. Imports, CPU initialization and result transfer are included. Validation and benchmark logging/report/plot generation are excluded. There is no optimization loop.
-
-The benchmark’s five bars group the detailed measurements without dropping work. Setup includes imports, initialization and loading/building inputs. Compilation combines lowering and compilation for all stages. Sensitivity includes readout and host transfer. The raw JSON retains every stage and all warm repetitions.
-
-## Second benchmark: aLIGO
-
-Try another optical setup to check whether your improvements generalize:
-
-```bash
+# Feyer's harness, unchanged
+python benchmark.py --cpus 1 --output benchmark.json
 python benchmark_aligo.py --cpus 1 --output benchmark-aligo.json
+
+# our harness without JAX
+python benchmark_native.py --cpus 1 --output benchmark-native.json
+python benchmark_native.py --cpus 1 --setup aligo --output benchmark-native-aligo.json
 ```
 
-This uses the public **simplified Advanced LIGO (aLIGO)** setup, including mirror mechanics and squeezed light, with all **101 reference frequencies from 20–5000 Hz**. It computes the full simulation, sensitivity, powers and gradients for **29 design variables**: reflectivity, tuning, squeezing strength/angle, laser power, mass and independent optical lengths.
-
-The script shares the original benchmark's five-phase timing harness. Setup, all compilation, forward simulation, sensitivity and gradients count toward the total; validation and plotting are excluded. It writes `benchmark-aligo.json` and `benchmark-aligo.png`, and accepts the same `--repeats`, `--save-arrays` and `--plot` options. A successful run prints `PASS` after checking the public sensitivity reference, finite outputs and a gradient sanity check. The aLIGO reference uses its upstream log-sensitivity tolerance of `1e-6`.
-
-## Improve and compare
-
-1. Run the unmodified baseline in a fresh Python process.
-2. Use the phase plot to find a bottleneck, then edit `differometor/`.
-3. Run `python benchmark.py --cpus 1 --output benchmark-candidate.json`.
-4. Compare complete time, including compilation, on matching hardware, CPU affinity and software. Report median warm runtime separately and repeat measurements to assess variability.
-
-For local comparisons, keep the supplied setup, every frequency, double precision, physical outputs and gradients. Optimize the simulator so the speedup carries over to other optical setups. The full benchmark runs the quick correctness checks described below. Precomputed answers and omitted calculations do not count.
-
-Submit your code, before/after JSON reports and plots, and reproduction commands. A short note on your approach and correctness checks is welcome.
-
-## Judging and prizes
-
-Download the standalone [Judging Criteria PDF](judging-criteria.pdf), including timing rules and correctness checks.
-
-- **First prize:** Lowest complete evaluation time among correct submissions.
-- **Second prize:** Second-lowest complete evaluation time among correct submissions.
-- **Special prize:** The most surprising solution, chosen by the Feyer team.
-
-The speed prizes use the **complete first-run total on the final optical setup**, with matching hardware and CPU limits. Include imports, initialization, input preparation, all compilation, forward simulation, sensitivity, gradients and result transfer. Validation and benchmark reporting remain outside the timer; warm runtime is reported separately.
-
-AI coding tools are welcome. A high-level explanation of your approach, why it helps and what you learned is encouraged and helps the Feyer team understand your work.
-
-## Correctness: quick checks
-
-A correct submission evaluates the complete input setup, all requested frequencies and design variables, in double precision. It preserves physical results and gradients on both the development example and the final setup.
-
-For the supplied development benchmark (**101 frequencies**, **193 design variables**), the checks require:
-
-- **Correct sensitivities:** positive sensitivity at every frequency, matching the public reference with `abs(log(sensitivity) - log(reference)) <= 1e-5` (natural logarithm; about 0.001% relative difference).
-- **Finite results:** carrier, signal, noise, sensitivity, powers, loss and all 193 gradient values contain no NaN or infinity; the gradient is not identically zero.
-- **Consistent gradients:** gradients should pass the supplied sanity check.
-
-Run a shorter check with:
+Or in Docker, pinned to one CPU:
 
 ```bash
-python benchmark.py --cpus 1 --repeats 3 --output benchmark-check.json
+docker build -t differometor-fast .
+docker run --rm --cpus 1 -v "$PWD/out:/out" differometor-fast --repeats 3
+docker run --rm --cpus 1 -v "$PWD/out:/out" --entrypoint python differometor-fast \
+    benchmark_native.py --cpus 1 --repeats 3 --output /out/benchmark-native.json
 ```
 
-A successful run prints `PASS`. These quick checks cover the supplied workload and run outside the scored time. For larger numerical changes, comparing saved arrays or trying another public setup is helpful.
+To compare against the unmodified simulator, check out Feyer's kit ([feyerlabs/start-hack-munich-2026](https://github.com/feyerlabs/start-hack-munich-2026)) and run the same `benchmark.py` there on the same machine. It needs about 14 GiB of memory.
 
-## CPU baseline
+## What to know before using this
 
-Tested on **16 November 2026** on an **Intel Xeon Platinum 8468**, pinned to **one logical CPU** with **32 GB RAM** allocated. CPU affinity and numerical-library thread limits are recorded in the [raw report](benchmarks/cpu-baseline.json). No GPU was used.
+- **The fast path covers one kind of setup:** a single quantum noise detector (`qnoised` or balanced homodyne) and a single carrier operating point, with parameter links through a square root (which is what amplitude modulation uses). Other links, carrier sweeps and several noise detectors use the original JAX path, which is correct but as slow as before. `benchmark_native.py` stops with a message for such setups.
+- **One known gap in this state:** a beamsplitter beyond the critical angle (total internal reflection) raises an error on the fast path instead of falling back.
+- **The start-up measures are benchmark engineering.** They matter for a first run measured in milliseconds and are worth about 0.05 % of an optimization with 10,000 steps. What carries over to real use is the numerical core: each further step is about 630 times faster.
+- **Tuned to one environment.** The interventions in JAX are written for jax 0.9.0 and leave other versions alone. The shipped bytecode is for Python 3.12. The native kernel is built for x86-64 Linux; elsewhere SuperLU is used.
+- **CPU only.** The original JAX path is still there for anything else.
 
-![Time per phase](benchmarks/cpu-baseline.png)
+## Repository map
 
-| Measurement | Seconds |
-| --- | ---: |
-| Complete first-run total, including compilation | **44.204** |
-| Total tracing/lowering and compilation | 22.918 |
-| Median warm evaluation, ten repetitions | **17.679** |
-| Warm minimum / maximum | 17.118 / 18.282 |
+| Path | What it is |
+| --- | --- |
+| [`differometor/fast.py`](differometor/fast.py) | Sparse host path and the hand-written reverse pass |
+| [`differometor/_native/`](differometor/_native) | C kernel for the shared-pattern LU, with its build script and the built library |
+| [`differometor/_interpret.py`](differometor/_interpret.py), [`_tuning.py`](differometor/_tuning.py) | NumPy interpreter for small JAX programs, per-program JAX settings |
+| [`differometor/_startup.py`](differometor/_startup.py), [`argparse.py`](argparse.py), [`packaging/`](packaging) | Start-up measures and the two ways they get loaded early |
+| [`differometor/_simulate_dicht.py`](differometor/_simulate_dicht.py) | The original dense JAX path, loaded on first use |
+| [`benchmark.py`](benchmark.py), [`benchmark_aligo.py`](benchmark_aligo.py) | Feyer's harness, unchanged |
+| [`benchmark_native.py`](benchmark_native.py) | Our harness without JAX |
+| [`runs/`](runs) | Test scripts, measurement scripts and each author's lab notes |
+| [`docs/notes/`](docs/notes) | Working notes from the hackathon |
+| [`docs/pitch/`](docs/pitch) | The numbers behind the pitch and the pitch script |
+| [`docs/challenge/`](docs/challenge) | Feyer's brief and judging criteria |
+| [`benchmarks/`](benchmarks), [`examples/`](examples) | Feyer's baseline reports and the upstream examples, unchanged |
 
-All 101 frequencies and 193 gradients were evaluated. The public sensitivity test and two-step numerical gradient check passed. This was measured on a shared worker, so record your own baseline. The full benchmark adds archive support and output-path checks to the measured version; its numerical workload is unchanged. The short starter compiles simulation and differentiation together, so its timings are not directly comparable to this staged benchmark.
+The notes are in German and were written under time pressure, as a lab notebook rather than as documentation. Each one names the commit and machine its numbers belong to. Good entry points: [`docs/pitch/PITCH.md`](docs/pitch/PITCH.md) for the numbers in context, [`docs/notes/PROGRAMMFLUSS.md`](docs/notes/PROGRAMMFLUSS.md) for how the program and its matrices work, [`runs/philip/NOTIZEN.md`](runs/philip/NOTIZEN.md) and [`runs/noel/NOTIZEN.md`](runs/noel/NOTIZEN.md) for every measure with its measurement, and [`runs/philip/FEHLVERSUCHE.md`](runs/philip/FEHLVERSUCHE.md) for what did not work.
 
-### aLIGO — second setup
+## What state this is
 
-Tested on **21 November 2026** on an **Intel Xeon Platinum 8468**, pinned to **one logical CPU** with 32 GB RAM allocated. The run covered all **101 frequencies and 29 gradients**; reference-sensitivity and gradient checks passed. See the [raw aLIGO report](benchmarks/aligo-cpu-baseline.json).
+The code is what we submitted on 22 November 2026: `differometor/`, the harnesses and the packaging are identical to the submission. Around it, this repository keeps what the submission left out: the tests, the measurement scripts, our notes and the pitch.
 
-![aLIGO time per phase](benchmarks/aligo-cpu-baseline.png)
+## Team
 
-| Measurement | Seconds |
-| --- | ---: |
-| Complete first-run total, including compilation | **25.309** |
-| Total tracing/lowering and compilation | 22.897 |
-| Median warm evaluation, ten repetitions | **0.124** |
-| Warm minimum / maximum | 0.122 / 0.162 |
+ALT CONTROL ELITE: Philip ([mpb700](https://github.com/mpb700)), Noel Blatter, Max Jäckle ([jmax696](https://github.com/jmax696)) and [Haniubub](https://github.com/Haniubub).
 
-These are different optical workloads; use each setup's own baseline when measuring a speedup.
+AI coding tools were welcome in this challenge and we used them heavily. Most commits are co-authored with Claude, and [`prototyp/FABLE_PROMPT.md`](prototyp/FABLE_PROMPT.md) is an early prompt we worked from.
 
-Replot either saved report without running the simulation:
+One correctness fix goes back to an edge case another team found (a reflectivity of exactly 1); it is credited in [`runs/philip/test_singular.py`](runs/philip/test_singular.py).
 
-```bash
-python plot_timings.py benchmark-baseline.json --output benchmark-baseline.png
-python plot_timings.py benchmark-aligo.json --output benchmark-aligo.png
-```
+## Credits and license
 
-## Public source and license
+The simulator is [Differometor](https://github.com/artificial-scientist-lab/Differometor) by the Artificial Scientist Lab (commit `b0dc7c7`); its own README is kept as [README.upstream.md](README.upstream.md). The challenge, the benchmark harness, the baselines and the result chart are by [Feyer](https://github.com/feyerlabs/start-hack-munich-2026). [UPSTREAM.json](UPSTREAM.json) is Feyer's record of the original file hashes and describes the kit as supplied, not this modified version.
 
-The simulator is the unmodified public [Artificial Scientist Lab Differometor](https://github.com/artificial-scientist-lab/Differometor) at commit `b0dc7c79e7c72a1b010174f6bdcad01efa51d6ff`. This repository adds the Feyer hackathon brief and benchmarking tools. The full upstream instructions remain in [README.upstream.md](README.upstream.md); the upstream [MIT license](LICENSE) is retained.
-
-[UPSTREAM.json](UPSTREAM.json) records the original simulator and fixture hashes.
+Everything is under the upstream [MIT license](LICENSE).

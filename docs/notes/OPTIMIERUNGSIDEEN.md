@@ -2,7 +2,7 @@
 
 Stand: 20.11.2026, Branch `max/lu-once`. Diese Datei hält fest, wo das Original Zeit verliert, welche Ideen wir dazu haben und welche davon auf Philips Branch `philip` schon umgesetzt sind.
 
-Die Angaben zum Stand von `philip` stammen aus [`README.optimizations.md` auf `origin/philip`](https://github.com/mpb700/fayer-muc/blob/philip/README.optimizations.md) (Commit `ab82e42`). Diese Messungen habe ich nicht selbst wiederholt.
+Die Angaben zum Stand von `philip` stammen aus [`README.optimizations.md` am Stand `ab82e42`](https://github.com/mpb700/feyer-muc/blob/ab82e42/README.optimizations.md) (heute [`OPTIMIERUNGEN.md`](OPTIMIERUNGEN.md)). Diese Messungen habe ich nicht selbst wiederholt.
 
 ## Kurzfassung
 

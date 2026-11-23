@@ -6,6 +6,6 @@ runs/*.npz
 runs/*.log
 prototyp
 media
-challenge.docx
+docs
 runs/noel/vergleich
 runs/noel/out

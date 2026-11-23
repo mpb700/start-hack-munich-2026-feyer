@@ -324,14 +324,14 @@ Rund 550 ms sind fix, solange `benchmark.py` unverändert bleibt und keine XLA-F
 
 ## Fragen an Feyer, die dazugekommen sind
 
-Noels Liste steht in `FRAGEN_AN_FEYER.md`. Aus dieser Nacht kommen zwei dazu, beide in der Art von A9 (Host-Detektoren):
+Noels Liste steht in `docs/notes/FRAGEN_AN_FEYER.md`. Aus dieser Nacht kommen zwei dazu, beide in der Art von A9 (Host-Detektoren):
 
 | Vorschlag | Frage | Warum es zählt | Bei Nein |
 | --- | --- | --- | --- |
 | A11 | Die Auswahl der Detektor-Ports (`signal_detector(...)[ports]`) läuft bei uns in NumPy statt durch XLA, mit eigener Rückwärtsregel. Dafür bekommt der zurückgegebene JAX-Tracer ein eigenes `__getitem__`. In Ordnung? | Spart rund 60 ms Kompilierzeit. Resultate bit-identisch. Nutzt eine JAX-Interna (`tracer.__class__`) | `HOST_DETECTOR_PORTS = False` in `components.py` |
 | A12 | Die Index-Arrays und konstanten Matrixeinträge aus `run_build_step` sind bei uns Konstanten der jit-Funktionen statt Laufzeit-Eingaben. In Ordnung? | Spart rund 25 ms. Resultate bit-identisch | `STATIC = False` in `sparse.py` |
 
-Der Regeltext in `judging-criteria.pdf` verlangt nur: vollständiges Setup, 101 Frequenzen, 193 Designvariablen, doppelte Genauigkeit, Resultate und Gradienten erhalten, `PASS`. Zu Callbacks oder Interna steht dort nichts.
+Der Regeltext in `docs/challenge/judging-criteria.pdf` verlangt nur: vollständiges Setup, 101 Frequenzen, 193 Designvariablen, doppelte Genauigkeit, Resultate und Gradienten erhalten, `PASS`. Zu Callbacks oder Interna steht dort nichts.
 
 ## Prüfen und messen
 

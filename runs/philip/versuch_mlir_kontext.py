@@ -5,7 +5,7 @@ make_ir_context`, 2-3 ms each, 11 ms for the first one). benchmark.py lowers six
 timed part: three conversions in its build step, forward, sensitivity and gradient. This script
 replaces that function by one that hands out the same context again and then runs benchmark.py
 unchanged. It only measures what the idea would bring; changing JAX from inside the library is
-a question for Feyer (like XLA flags, B6 in FRAGEN_AN_FEYER.md).
+a question for Feyer (like XLA flags, B6 in docs/notes/FRAGEN_AN_FEYER.md).
 
 Measured on x86 (6 alternating runs each): build 56-65 -> 52 ms, trace/lower 35.5 -> 29 ms,
 compile unchanged. `import jax` runs before benchmark.py starts its clock here, so compare the
