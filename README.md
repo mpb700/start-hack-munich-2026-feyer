@@ -58,7 +58,7 @@ Our own measurements on the two public setups. Same CPU model as Feyer's machine
 
 Read these with two caveats. Our values are with a warm file cache; Feyer's baseline reports look like cold runs. Cold against cold, an earlier state of this code needed 1.25 s against 44.2 s with `benchmark.py`. And the "further step" row is from that earlier state too; each number's commit and method is in the notes linked below.
 
-Peak memory is about 300 MB instead of 14.4 GiB (measured in Docker on an Apple M4).
+Peak memory is about 300 MB instead of 14.4 GiB (measured in Docker on an Apple M4 Pro).
 
 ## Correctness
 

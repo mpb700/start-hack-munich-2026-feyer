@@ -50,7 +50,7 @@ Ohne Bytecode-Cache (frischer Export mit `git archive`, `PYTHONDONTWRITEBYTECODE
 
 Zwischenstand von 02:49 (langsame Phase der Maschine, 12 Läufe): `philip` 1508,5, `noel` (`c261b63`) 1089,6, `philip-nacht` (`ef2f1fc`) 928,2.
 
-Die Zeiten sind anders verteilt als auf dem Mac. Auf x86 ist das Kompilieren der grösste Block nach den Imports, auf dem M4 sind es 75 ms. SuperLU ist 3,5-mal langsamer als auf dem M4.
+Die Zeiten sind anders verteilt als auf dem Mac. Auf x86 ist das Kompilieren der grösste Block nach den Imports, auf dem M4 Pro sind es 75 ms. SuperLU ist 3,5-mal langsamer als auf dem M4 Pro.
 
 ## Was geändert wurde
 
@@ -290,7 +290,7 @@ Was man wissen muss:
 - **Schalter:** `DIFFEROMETOR_STARTUP=gc,lazy` nimmt 28, 29 und 31 heraus (`gc,lazy,defer,dataclass` nur 31), `DIFFEROMETOR_TUNING=INLINE_JITS_UNDER_AD=0,DIRECT_LOWERING_SMALL_PROGRAMS=0` nimmt 30 heraus, `ENABLED = False` in `argparse.py` alle Start-Massnahmen.
 - **32 im Detail.** Ein Homodyne-Detektor ist weiter ein einziger Rauschdetektor; sein zweiter Port bekommt in beiden Seitenbändern den Faktor exp(i·Phase). Beim Readout des Benchmarks (`signals[0] - signals[1]`) und Phase 180° ist der Kotangent des Signals ein Vielfaches der Detektorgewichte, dann gilt die Abkürzung aus Änderung 14. Bei jeder anderen Phase kostet der Rückwärtslauf eine weitere Lösung mit der Zerlegung des Vorwärtslaufs. `runs/philip/test_homodyne.py` vergleicht mit `simulate_jax`: gespeichertes Setup `uifo_20_5000.json`, andere Phasen, Phase als Designvariable, andere Readouts, Zufalls-UIFOs, Voyager, zustandslose Callbacks, `vmap`. Grösste Abweichung von ln s 1,1e-09, Gradient 4,2e-09 (VM, nativer Kern).
 - **Schlecht konditionierte Setups.** Beim Zufalls-UIFO 3×3 mit Seed 1 und den Startwerten des Generators (Konditionszahl 1e15) weichen schneller Weg und `simulate_jax` um 3e-04 in ln s ab. Gegen eine exakt nachgerechnete Lösung (Nachiteration mit rational summierten Residuen) liegt der schnelle Weg an den Detektorzeilen 3e-11 daneben, `simulate_jax` 2e-05. Bei einem solchen Setup wäre Feyers Referenz selbst ungenauer als die Toleranz 1e-5.
-- **Offen:** Verknüpfte Parameter (Amplitudenmodulation), mehrere Carrier-Arbeitspunkte und mehr als ein Rauschdetektor laufen weiter über den dichten JAX-Weg. Ebenso jedes `df.run(...)` ohne Designvariablen: Der Build setzt dann einen Platzhalter vom Typ complex ein, den `fast.supports` ablehnt (betrifft `examples/aligo.py` und `examples/uifo.py`; mit reellem Platzhalter 6,7 s → 0,04 s auf dem M4, nur gemessen, nicht eingebaut).
+- **Offen:** Verknüpfte Parameter (Amplitudenmodulation), mehrere Carrier-Arbeitspunkte und mehr als ein Rauschdetektor laufen weiter über den dichten JAX-Weg. Ebenso jedes `df.run(...)` ohne Designvariablen: Der Build setzt dann einen Platzhalter vom Typ complex ein, den `fast.supports` ablehnt (betrifft `examples/aligo.py` und `examples/uifo.py`; mit reellem Platzhalter 6,7 s → 0,04 s auf dem M4 Pro, nur gemessen, nicht eingebaut).
 - **Prüfskripte richtig starten.** Mehrere Skripte unter `runs/` setzen den Suchpfad nicht selbst. Ohne `PYTHONPATH=.` prüfen sie das installierte Paket statt dieses Checkouts.
 
 Gemessen und nicht eingebaut (`prof-1726`, je 20 Läufe): `SHORT_LOCATIONS_AT_IMPORT`, `INLINE_DISPATCH_AT_IMPORT` und `DIFFEROMETOR_GC=off` bringen je höchstens 0,5 ms. `--xla_disable_all_hlo_passes` macht das Kompilieren von Readout und Gradient langsamer und bricht Programme mit Scatter.

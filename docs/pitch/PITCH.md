@@ -139,7 +139,7 @@ Bei vielen Prozessen nacheinander ist nur der erste kalt. Die beiden letzten Zei
 | Was wird nicht abgedeckt? | Parameter-Verknüpfungen mit einer anderen Funktion als der Wurzel, mehrere Carrier-Arbeitspunkte und mehr als ein Rauschdetektor. Diese Fälle laufen über den alten Weg: korrekt, aber langsamer. Amplitudenmodulation (Verknüpfung über die Wurzel) läuft seit dem 22.11. auf dem schnellen Weg: aLIGO 233 ms statt 21,5 s, Voyager 253 ms statt 22,8 s (Cache warm). |
 | Warum zeigt der Report 0 ms Kompilieren? | Die drei kleinen Programme des Benchmarks werden mit NumPy ausgeführt statt von XLA kompiliert. Es wird nichts ausgelassen und nichts zwischengespeichert; dieselben Operationen laufen auf denselben Eingaben. Ein Schalter stellt den kompilierten Weg wieder her (`INTERPRET_SMALL_PROGRAMS=0`), dann dauerte der warme Erstlauf am Stand `1c2e618` 297 statt 246 ms. Die Ergebnisse stimmen auf 1e-14 überein. |
 | Was passiert bei einer anderen JAX-Version? | Die Eingriffe sind auf jax 0.9.0 abgestimmt. Fast jede Maßnahme hat einen eigenen Schalter, der mitgelieferte Bytecode lässt sich entfernen. |
-| Wie viel Speicher braucht es? | Rund 300 MB in der Spitze (UIFO, ganzer Prozess mit Validierung), gemessen in Docker auf einem Apple M4; auf dem Xeon noch nicht gemessen (siehe Abschnitt 8). Die Baseline braucht 14,4 GiB. |
+| Wie viel Speicher braucht es? | Rund 300 MB in der Spitze (UIFO, ganzer Prozess mit Validierung), gemessen in Docker auf einem Apple M4 Pro; auf dem Xeon noch nicht gemessen (siehe Abschnitt 8). Die Baseline braucht 14,4 GiB. |
 
 ---
 
@@ -149,7 +149,7 @@ Bei vielen Prozessen nacheinander ist nur der erste kalt. Die beiden letzten Zei
 | --- | --- | --- |
 | Ob Feyer mit kaltem Datei-Cache misst | Entscheidet, ob 1,25 s oder 0,24 s die gewertete Zahl ist. Bisher ist es nur ein Schluss aus ihren Berichten | bei Feyer nachfragen |
 | Ob Feyer das Interpretieren der kleinen Programme akzeptiert | Der Report zeigt 0 ms Kompilieren. Der letzte Stand, der noch kompiliert hat (`6a05d3f`), liegt kalt bei 1,56 s statt 1,25 s | bei Feyer nachfragen; Schalter `INTERPRET_SMALL_PROGRAMS` |
-| Spitzenspeicher auf dem Xeon | Weniger Speicher heißt mehr parallele Läufe pro Maschine. Bei 14,4 GiB passen auf 32 GB nur 2 Läufe; bei uns sind es auf dem M4 rund 300 MB | `/usr/bin/time -v python benchmark.py --cpus 1 --repeats 3`, Zeile „Maximum resident set size" |
+| Spitzenspeicher auf dem Xeon | Weniger Speicher heißt mehr parallele Läufe pro Maschine. Bei 14,4 GiB passen auf 32 GB nur 2 Läufe; bei uns sind es auf dem M4 Pro rund 300 MB | `/usr/bin/time -v python benchmark.py --cpus 1 --repeats 3`, Zeile „Maximum resident set size" |
 
 ---
 
