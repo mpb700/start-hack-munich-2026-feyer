@@ -134,7 +134,7 @@ The code is what we submitted on 22 November 2026: `differometor/`, the harnesse
 
 ## Team
 
-ALT CONTROL ELITE: Philip ([mpb700](https://github.com/mpb700)), Noel Blatter, Max Jäckle ([jmax696](https://github.com/jmax696)) and [Haniubub](https://github.com/Haniubub).
+ALT CONTROL ELITE: [mpb700](https://github.com/mpb700), [noeschi](https://github.com/noeschi), [jmax696](https://github.com/jmax696) and [Haniubub](https://github.com/Haniubub).
 
 AI coding tools were welcome in this challenge and we used them heavily. Most commits are co-authored with Claude, and [`prototyp/FABLE_PROMPT.md`](prototyp/FABLE_PROMPT.md) is an early prompt we worked from.
 
