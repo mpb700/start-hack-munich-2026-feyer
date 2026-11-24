@@ -10,6 +10,19 @@ On Feyer's final evaluation setup, the unmodified simulator needs **29.969 s**. 
 
 *Feyer's official result chart (22 November 2026, one logical CPU of an Intel Xeon Platinum 8468).*
 
+## The pitch
+
+| The pitch video | The interactive presentation |
+| :---: | :---: |
+| [![Video: From Black Holes to Better Detectors: Making the Search 300× Faster](https://img.youtube.com/vi/uW9aaLR4ieg/maxresdefault.jpg)](https://www.youtube.com/watch?v=uW9aaLR4ieg) | [![First slide of the presentation: a 3D model of the challenge setup](media/presentation-preview.png)](https://mpb700.github.io/faster-physics-presentation/index-dunkel.html) |
+| [Watch on YouTube](https://www.youtube.com/watch?v=uW9aaLR4ieg) (4K) | Open the [dark](https://mpb700.github.io/faster-physics-presentation/index-dunkel.html) or the [light](https://mpb700.github.io/faster-physics-presentation/) version |
+
+**The video** is our pitch for the START Hack jury: [From Black Holes to Better Detectors: Making the Search 300× Faster](https://www.youtube.com/watch?v=uW9aaLR4ieg). It explains why a faster simulator matters for finding gravitational waves. Its script is in [`docs/pitch/SCRIPT_EN.md`](docs/pitch/SCRIPT_EN.md).
+
+**The presentation** is what we showed the Feyer jury. It walks through the four main ideas on a 3D model of the challenge setup and runs in the browser: the arrow keys move through the slides, `H` lists all keys and `L` switches to German. Its source and speaker notes are in [their own repository](https://github.com/mpb700/faster-physics-presentation).
+
+The presentation was given before the final measurement. Its headline, 1.25 s against 44 s, is the cold first run with Feyer's own harness at that point, not the final 0.098 s.
+
 ## What the simulator computes
 
 A detector design is a graph of mirrors, beamsplitters, lasers and free space. The simulator turns it into sparse linear systems and answers three questions: where is the laser light, what does a gravitational wave do to it at each frequency of interest, and how much quantum noise reaches the detector. From that follows the detector's sensitivity. An optimizer then asks for the gradient of that sensitivity with respect to every design parameter and turns all of them a little. The challenge workload is one such step: 101 frequencies, 193 design variables, double precision.
