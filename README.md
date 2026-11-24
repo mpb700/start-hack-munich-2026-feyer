@@ -19,7 +19,7 @@ On Feyer's final evaluation setup, the unmodified simulator needs **29.969 s**. 
 
 **The video** is our pitch for the START Hack jury: [From Black Holes to Better Detectors: Making the Search 300× Faster](https://www.youtube.com/watch?v=uW9aaLR4ieg). It explains why a faster simulator matters for finding gravitational waves. Its script is in [`docs/pitch/SCRIPT_EN.md`](docs/pitch/SCRIPT_EN.md).
 
-**The presentation** is what we showed the Feyer jury. It walks through the four main ideas on a 3D model of the challenge setup and runs in the browser: the arrow keys move through the slides, `H` lists all keys and `L` switches to German. Its source and speaker notes are in [their own repository](https://github.com/mpb700/faster-physics-presentation).
+**The presentation** is what we showed the Feyer jury. It walks through the four main ideas on a 3D model of the challenge setup and runs in the browser: the arrow keys move through the slides, `H` lists all keys and `L` switches to German.
 
 The presentation was given before the final measurement. Its headline, 1.25 s against 44 s, is the cold first run with Feyer's own harness at that point, not the final 0.098 s.
 
@@ -147,7 +147,7 @@ The code is what we submitted on 22 November 2026: `differometor/`, the harnesse
 
 ## Team
 
-ALT CONTROL ELITE: [mpb700](https://github.com/mpb700), [noeschi](https://github.com/noeschi), [jmax696](https://github.com/jmax696) and [Haniubub](https://github.com/Haniubub).
+ALT CONTROL ELITE: [mpb700](https://github.com/mpb700), [noeschi](https://github.com/noeschi), [jmax696](https://github.com/jmax696), [Haniubub](https://github.com/Haniubub) and Dila.
 
 AI coding tools were welcome in this challenge and we used them heavily. Most commits are co-authored with Claude, and [`prototyp/FABLE_PROMPT.md`](prototyp/FABLE_PROMPT.md) is an early prompt we worked from.
 
